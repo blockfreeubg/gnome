@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  Component gallery — development and QA only (served by `npm run dev` at /dev/gallery.html; not part of the production
+  build, whose only input is index.html). scripts/visual-qa.mjs drives it to test every component's keyboard path.
+  Query: ?theme=dark|light · ?motion=none|reduced|normal|expressive.
+-->
+<html lang="en" class="theme-dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Components · GNOME dev</title>
+    <link rel="icon" href="/brand/favicon.ico" sizes="any" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./gallery.ts"></script>
+  </body>
+</html>

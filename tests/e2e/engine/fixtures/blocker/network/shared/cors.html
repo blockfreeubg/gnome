@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>cors {{host}}</title>
+<!-- The CORS measurement (task addendum 2026-11-19): what a page script on this site can read of another site's
+     responses through each engine, and what the upstream server received. /echo answers with CORS headers that
+     reflect the Origin (credentials allowed); /cookies and /beacon answer without any. -->
+<pre id="out">pending</pre>
+<script>
+(async () => {
+  const out = {};
+  const read = async (name, url, init) => {
+    try {
+      const r = await fetch(url, init);
+      const text = await r.text();
+      out[name] = { status: r.status, type: r.type, readable: text.length > 0, acao: r.headers.get('access-control-allow-origin'), body: text.slice(0, 400) };
+    } catch (e) { out[name] = { error: e.name }; }
+  };
+  await read('noCorsHeadersCookies', '{{origin:site-b}}/cookies');
+  await read('noCorsHeadersBeacon', '{{origin:site-b}}/beacon?id=cors');
+  await read('corsEcho', '{{origin:site-b}}/echo?cors=1');
+  await read('corsEchoCredentials', '{{origin:site-b}}/echo?cors=2', { credentials: 'include' });
+  await read('nonSimplePut', '{{origin:site-b}}/echo?cors=put', { method: 'PUT', headers: { 'x-gnome-probe': '1' }, body: 'x' });
+  out.xhr = await new Promise((resolve) => {
+    const x = new XMLHttpRequest();
+    x.open('GET', '{{origin:site-b}}/cookies');
+    x.onload = () => resolve({ status: x.status, readable: (x.responseText || '').length > 0 });
+    x.onerror = () => resolve({ error: 'error' });
+    x.send();
+  });
+  document.getElementById('out').textContent = JSON.stringify(out);
+})();
+</script>

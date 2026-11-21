@@ -1,0 +1,114 @@
+<!doctype html><meta charset="utf-8"><title>network page {{host}}</title>
+<!-- Lane x1's network rows: each probe records what happened into #out once the page has loaded. -->
+<pre id="out">pending</pre>
+<script>
+  const out = { host: location.hostname };
+  const done = {};
+  const wait = (name) => new Promise((resolve) => (done[name] = resolve));
+  const probes = [];
+  function script(name, src) {
+    probes.push(new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = () => resolve((out[name] = 'load'));
+      s.onerror = () => resolve((out[name] = 'error'));
+      document.head.appendChild(s);
+    }));
+  }
+  function img(name, src) {
+    probes.push(new Promise((resolve) => {
+      const i = new Image();
+      i.onload = () => resolve((out[name] = 'load'));
+      i.onerror = () => resolve((out[name] = 'error'));
+      i.src = src;
+    }));
+  }
+  function frame(name, src) {
+    probes.push(new Promise((resolve) => {
+      const f = document.createElement('iframe');
+      f.name = name;
+      f.onload = () => {
+        let text = null;
+        try { text = f.contentDocument && f.contentDocument.body ? f.contentDocument.body.textContent.trim() : null; } catch (e) { text = 'unreadable'; }
+        resolve((out[name] = { loaded: true, text }));
+      };
+      f.src = src;
+      document.body.appendChild(f);
+      setTimeout(() => resolve((out[name] = out[name] || { loaded: false })), 8000);
+    }));
+  }
+  function request(name, url) {
+    probes.push(fetch(url).then((r) => (out[name] = { status: r.status }), (e) => (out[name] = { error: String(e && e.name) })));
+    probes.push(new Promise((resolve) => {
+      const x = new XMLHttpRequest();
+      x.open('GET', url);
+      x.onload = () => resolve((out[name + 'Xhr'] = { status: x.status }));
+      x.onerror = () => resolve((out[name + 'Xhr'] = { error: 'error' }));
+      x.send();
+    }));
+  }
+  function socket(name, url) {
+    probes.push(new Promise((resolve) => {
+      let ws;
+      try { ws = new WebSocket(url); } catch (e) { resolve((out[name] = 'threw:' + e.name)); return; }
+      const t = setTimeout(() => resolve((out[name] = 'timeout')), 8000);
+      ws.onopen = () => { clearTimeout(t); ws.close(); resolve((out[name] = 'open')); };
+      ws.onerror = () => { clearTimeout(t); resolve((out[name] = 'error')); };
+    }));
+  }
+  function directConnection() {
+    // A text node in <style>: neither engine rewrites it, GNOME's proxied-document CSP stops it (direct-connection).
+    const s = document.createElement('style');
+    // @import loads also in a frame that is not rendered (a background tab), the background image only when painted.
+    s.appendChild(document.createTextNode('@import url(http://127.0.0.1:9/gnome-direct.css); body{background-image:url(http://127.0.0.1:9/gnome-direct.png)}'));
+    document.head.appendChild(s);
+    // Web Animations: also left native by both engines, and resolved by Firefox without painting (host-lib /csp-doc).
+    document.body.style.minHeight = '40px';
+    try { document.body.animate([{ backgroundImage: 'url(http://127.0.0.1:9/gnome-direct-anim.png)' }, { backgroundImage: 'none' }], 2000); } catch (e) {}
+  }
+  const q = new URLSearchParams(location.search);
+  for (const p of (q.get('p') || '').split(',')) {
+    if (p === 'ad') script('ad', '{{origin:ads}}/network/ad.js');
+    if (p === 'ok') script('ok', '{{origin:ads}}/network/ok.js');
+    if (p === 'bf') script('bf', '{{origin:cdn}}/network/bf.js');
+    if (p === 'stub') script('stub', '{{origin:cdn}}/network/stub.js');
+    // row N6b: uBO's google-analytics_ga.js stub (a $redirect resource) runs window.location.assign for a queued
+    // ['_link', url]: rewritten by the engine, the tab stays in the proxy; unrewritten, the frame would leave it
+    if (p === 'ga') {
+      window._gaq = [['_link', q.get('land') || '/']];
+      script('ga', '{{origin:cdn}}/network/ga.js');
+    }
+    if (p === 'rr') script('rr', '{{origin:trk}}/network/rr.js');
+    if (p === 'trk') img('trk', '{{origin:trk}}/beacon?id=n3');
+    if (p === 'bad') img('bad', '{{origin:bad}}/beacon?id=n9');
+    if (p === 'adframe') frame('adframe', '{{origin:cdn}}/network/adframe.html');
+    if (p === 'frame2') frame('frame2', '{{origin:cdn}}/network/frame2.html');
+    if (p === 'inner-b') frame('innerb', '{{origin:site-b}}/network/inner.html');
+    if (p === 'fetch') request('fetch', '{{origin:ads}}/echo');
+    // a host only the generated big list names (||big-<n>.localhost^, rows S4/V10): blocked only by an engine set with it
+    if (p === 'big') request('big', 'http://big-7.localhost:{{port}}/echo');
+    // a third-party request with credentials (row V1: its Cookie and Sec-GPC are read from the fixture server's log)
+    if (p === 'echoself') probes.push(fetch('/echo?from=echoself', { credentials: 'include' }).then((r) => (out.echoself = { status: r.status }), (e) => (out.echoself = { error: String(e && e.name) })));
+    if (p === 'echob') probes.push(fetch('{{origin:site-b}}/echo?from=echob', { credentials: 'include' }).then((r) => (out.echob = { status: r.status }), (e) => (out.echob = { error: String(e && e.name) })));
+    if (p === 'ws') socket('ws', '{{origin:ads}}/ws'.replace(/^http/, 'ws'));
+    if (p === 'wsok') socket('wsok', '{{origin:cdn}}/ws'.replace(/^http/, 'ws'));
+    if (p === 'direct') directConnection();
+    if (p === 'link') {
+      const a = document.createElement('a');
+      a.id = 'link';
+      a.href = q.get('to') || '/';
+      a.textContent = 'link';
+      document.body.appendChild(a);
+    }
+  }
+  window.addEventListener('load', () => {
+    Promise.all(probes).then(() => {
+      out.adRan = window.gnomeAdRan || 0;
+      out.okRan = window.gnomeOkRan || 0;
+      out.bfRan = window.gnomeBfRan || 0;
+      out.realStub = window.gnomeRealStub || 0;
+      out.realRr = window.gnomeRealRr || 0;
+      document.getElementById('out').textContent = JSON.stringify(out);
+    });
+  });
+</script>

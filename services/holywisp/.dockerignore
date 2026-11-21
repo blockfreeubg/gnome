@@ -1,0 +1,5 @@
+# The image build copies only gnome.conf and licenses/ from this directory (see Dockerfile).
+# Everything else, notably build/ (binaries, logs), stays out of the build context.
+*
+!gnome.conf
+!licenses/

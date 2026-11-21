@@ -1,0 +1,84 @@
+<!doctype html><meta charset="utf-8"><title>cs18</title>
+<pre id="out"></pre>
+<script>
+  window.addEventListener('error', (e) => { document.getElementById('out').textContent = JSON.stringify({ error: String(e.message), at: e.lineno }); });
+</script>
+<script>
+  // R1 rule 2 in the browser (WAVE-B3 §12.2 CS18): this page replaces the natives a careless monitor would call with
+  // Proxies that record the realm of everything they receive. Nothing GNOME does may hand them an object of another
+  // realm (the engine host's), and GNOME's monitor must not call them at all.
+  // A realm is told by the end of an object's prototype chain (each realm has its own Object.prototype). Not by
+  // `Function`: Scramjet replaces the page's global Function with its own wrapper.
+  const getProto = Reflect.getPrototypeOf;
+  const OWN_ROOT = getProto({});
+  const foreign = [];
+  const calls = { getAttribute: 0, querySelectorAll: 0, iterator: 0, push: 0, item: 0 };
+  const realmOf = (v) => {
+    if ((typeof v !== 'object' && typeof v !== 'function') || v === null) return 'primitive';
+    try {
+      let p = getProto(v);
+      if (p === null) return 'none';
+      for (let i = 0; i < 32; i++) {
+        const q = getProto(p);
+        if (q === null) return p === OWN_ROOT ? 'page' : 'foreign';
+        p = q;
+      }
+      return 'deep';
+    } catch (e) { return 'unreadable'; }
+  };
+  // Re-entrancy guard: the engine's own hooks (and this trap's own reads) may call the replaced members again.
+  let busy = false;
+  const record = (name) => ({
+    apply(target, self, args) {
+      if (!busy) {
+        busy = true;
+        try {
+          calls[name]++;
+          if (realmOf(self) === 'foreign') foreign.push(`${name}:this`);
+          if (realmOf(args) === 'foreign') foreign.push(`${name}:arguments`);
+          for (let i = 0; i < args.length; i++) if (realmOf(args[i]) === 'foreign') foreign.push(`${name}:arg${i}`);
+        } finally {
+          busy = false;
+        }
+      }
+      return Reflect.apply(target, self, args);
+    },
+  });
+  Element.prototype.getAttribute = new Proxy(Element.prototype.getAttribute, record('getAttribute'));
+  Element.prototype.querySelectorAll = new Proxy(Element.prototype.querySelectorAll, record('querySelectorAll'));
+  NodeList.prototype[Symbol.iterator] = new Proxy(NodeList.prototype[Symbol.iterator], record('iterator'));
+  NodeList.prototype.item = new Proxy(NodeList.prototype.item, record('item'));
+  Array.prototype.push = new Proxy(Array.prototype.push, record('push'));
+  const base = { ...calls };
+  window.addEventListener('load', () => {
+    // Rule 3: nodes made by the fragment parser that this page's code never touches until the check below (GNOME's
+    // monitor reaches them first, through the page-realm observer's records).
+    document.body.insertAdjacentHTML('beforeend', '<div id="gnome-cs18-frag" class="gnome-cs18-gen">fragment-parser node</div>');
+    for (let i = 0; i < 20; i++) {
+      const d = document.createElement('div');
+      d.className = 'gnome-cs18-n' + i + (i === 7 ? ' gnome-cs18-gen' : '');
+      d.id = 'gnome-cs18-id' + i;
+      d.textContent = 'node ' + i;
+      document.body.appendChild(d);
+    }
+    setTimeout(() => {
+      document.getElementById('gnome-cs18-id3').className = 'gnome-cs18-changed gnome-cs18-gen';
+      setTimeout(() => {
+        // the page's own calls after its replacement (none so far: it used none of them) are counted against base
+        const sheets = document.adoptedStyleSheets || [];
+        const realms = Array.prototype.map.call(sheets, (s) => realmOf(s));
+        let checked = 0;
+        for (const id of ['gnome-cs18-parsed', 'gnome-cs18-frag']) {
+          const n = document.getElementById(id);
+          if (n === null) foreign.push(`${id}:missing`);
+          else {
+            checked++;
+            if (realmOf(n) !== 'page') foreign.push(`${id}:${realmOf(n)}`);
+          }
+        }
+        document.getElementById('out').textContent = JSON.stringify({ foreign, calls, base, sheets: realms, checked });
+      }, 600);
+    }, 200);
+  });
+</script>
+<div id="gnome-cs18-parsed" class="gnome-cs18-gen">a parser-made node the page code never touched before GNOME did</div>

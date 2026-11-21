@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en" class="theme-dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>GNOME</title>
+    <meta name="description" content="GNOME — a self-hosted web proxy, in-browser browser and games platform." />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/brand-v2/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/brand-v2/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand-v2/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/brand-v2/favicon-64.png" />
+    <link rel="apple-touch-icon" href="/brand-v2/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!--
+      Pre-paint boot: applies the saved theme class and CSS variables before the first frame (no flash of the
+      wrong theme). Mirrors settings/apply.ts → resolveAppearance(); src/settings/boot.test.ts runs both and compares
+      them. gnome-server allows it in its Content-Security-Policy by hashing inline scripts at startup, so any edit
+      here is picked up automatically (no 'unsafe-inline').
+    -->
+    <script>
+      (function () {
+        var d = document.documentElement;
+        function mq(q) {
+          try {
+            return !!(window.matchMedia && window.matchMedia(q).matches);
+          } catch (e) {
+            return false;
+          }
+        }
+        // Everything read from storage is checked: a damaged or hand-edited mirror must never leave the page
+        // half-styled (the app rewrites the mirror once it has validated the settings).
+        function isObj(v) {
+          return !!v && typeof v === 'object' && Object.prototype.toString.call(v) !== '[object Array]';
+        }
+        try {
+          var b = null;
+          try {
+            var raw = window.localStorage.getItem('gnome:settings:v1');
+            if (raw) b = JSON.parse(raw).boot || null;
+          } catch (e) {
+            b = null;
+          }
+          if (!isObj(b)) b = null;
+          var theme = (b && b.theme) || 'dark';
+          var light = theme === 'light' || (theme === 'system' && mq('(prefers-color-scheme: light)'));
+          var motion = (b && b.motion) || 'normal';
+          if (motion === 'normal' && mq('(prefers-reduced-motion: reduce)')) motion = 'reduced';
+          var scales = { none: 0, reduced: 0.5, normal: 1, expressive: 1.25 };
+          var scale = scales.hasOwnProperty(motion) ? scales[motion] : 1;
+          var vars = {};
+          var k;
+          if (b) {
+            var common = isObj(b.vars) ? b.vars : {};
+            var palette = isObj(light ? b.light : b.dark) ? (light ? b.light : b.dark) : {};
+            for (k in common) if (common.hasOwnProperty(k)) vars[k] = String(common[k]);
+            for (k in palette) if (palette.hasOwnProperty(k)) vars[k] = String(palette[k]);
+          }
+          vars['--motion'] = String(scale);
+          vars['--motion-move'] = motion === 'normal' || motion === 'expressive' ? '1' : '0';
+          for (k in vars) if (k.indexOf('--') === 0) d.style.setProperty(k, vars[k]);
+          var classes = [light ? 'theme-light' : 'theme-dark'];
+          var extra = b && Object.prototype.toString.call(b.classes) === '[object Array]' ? b.classes : [];
+          for (var i = 0; i < extra.length; i++) {
+            if (/^[a-z][a-z0-9-]*$/.test(String(extra[i]))) classes.push(String(extra[i]));
+          }
+          if (motion === 'none') classes.push('motion-none');
+          if (motion === 'reduced') classes.push('motion-reduced');
+          d.classList.remove('theme-dark', 'theme-light');
+          for (var j = 0; j < classes.length; j++) d.classList.add(classes[j]);
+          d.style.colorScheme = light ? 'light' : 'dark';
+          var meta = document.querySelector('meta[name="theme-color"]');
+          var metaColor = b && isObj(b.meta) ? (light ? b.meta.light : b.meta.dark) : null;
+          if (typeof metaColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(metaColor)) metaColor = light ? '#f4f4f4' : '#0a0a0a';
+          if (meta) meta.setAttribute('content', metaColor);
+        } catch (e) {
+          /* never block the page */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; color: #f5f5f5; background: #0a0a0a; padding: 2rem">
+        GNOME needs JavaScript to run.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

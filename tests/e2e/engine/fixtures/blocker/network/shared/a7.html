@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><title>a7 {{host}}</title>
+<!-- Row A7 (docs/WAVE-B3.md §12.2): an Ultraviolet page opens a WebSocket to the ad host past GNOME's createWebSocket
+     wrapper: in an about:blank child (a realm Ultraviolet never hooked) it loads bare-mux's own client from the proxy
+     origin with that realm's native DOM, and asks a BareClient of that realm (its prototype is not the one GNOME
+     wraps) for the socket. #out: {steps, a7}. Test data written for GNOME's e2e tests (CC0-1.0). -->
+<pre id="out">pending</pre>
+<script>
+(async () => {
+  const out = { steps: [] };
+  const done = () => (document.getElementById('out').textContent = JSON.stringify(out));
+  try {
+    const f = document.createElement('iframe');
+    document.body.appendChild(f);
+    const c = window[0];
+    out.steps.push('child');
+    const s = c.document.createElement('script');
+    s.src = '/vendor/bare-mux/index.js';
+    const loaded = await new Promise((r) => { s.onload = () => r(true); s.onerror = () => r(false); c.document.head.appendChild(s); setTimeout(() => r(false), 8000); });
+    out.steps.push(loaded ? 'bare-mux loaded' : 'bare-mux not loaded');
+    if (!loaded || !c.BareMux) { out.a7 = 'no client'; return done(); }
+    const client = new c.BareMux.BareClient();
+    out.steps.push('client');
+    out.a7 = await new Promise((resolve) => {
+      let ws;
+      try { ws = client.createWebSocket('{{origin:ads}}/ws'.replace(/^http/, 'ws'), [], undefined, {}); } catch (e) { resolve('threw:' + (e && e.name)); return; }
+      const t = setTimeout(() => resolve('timeout'), 8000);
+      ws.onopen = () => { clearTimeout(t); try { ws.close(); } catch (e) {} resolve('open'); };
+      ws.onerror = () => { clearTimeout(t); resolve('error'); };
+    });
+  } catch (e) {
+    out.a7 = 'threw:' + (e && e.name) + ':' + String(e && e.message).slice(0, 120);
+  }
+  done();
+})();
+</script>

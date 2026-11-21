@@ -1,0 +1,718 @@
+{
+"//": "Scriptlet metadata (name, aliases, requiresTrust; no bodies) of gnome-server's ubo-resources mirror 3f95507a25f41044bb8d1d826b338d9cadfd2256e4e2a02af8097cd3c7720c64 (uBO resources, GPL-3.0, compiled by Ghostery's CDN), taken 2026-11-19 for the sanitizer's trust tests.",
+"scriptlets": [
+{
+"name": "safe-self.fn",
+"aliases": []
+},
+{
+"name": "get-random-token.fn",
+"aliases": []
+},
+{
+"name": "get-exception-token.fn",
+"aliases": []
+},
+{
+"name": "trap-property-access.fn",
+"aliases": []
+},
+{
+"name": "collate-fetch-arguments.fn",
+"aliases": []
+},
+{
+"name": "parse-properties-to-match.fn",
+"aliases": []
+},
+{
+"name": "match-object-properties.fn",
+"aliases": []
+},
+{
+"name": "generate-content.fn",
+"aliases": []
+},
+{
+"name": "on-idle.fn",
+"aliases": []
+},
+{
+"name": "off-idle.fn",
+"aliases": []
+},
+{
+"name": "sleep.fn",
+"aliases": []
+},
+{
+"name": "lookup-elements.fn",
+"aliases": []
+},
+{
+"name": "run-at.fn",
+"aliases": []
+},
+{
+"name": "run-at-html-element.fn",
+"aliases": []
+},
+{
+"name": "abort-current-script.fn",
+"aliases": []
+},
+{
+"name": "abort-current-script.js",
+"aliases": [
+"abort-current-inline-script.js",
+"acis.js",
+"acs.js"
+]
+},
+{
+"name": "set-attr.fn",
+"aliases": []
+},
+{
+"name": "set-attr.js",
+"aliases": []
+},
+{
+"name": "trusted-set-attr.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "remove-attr.js",
+"aliases": [
+"ra.js"
+]
+},
+{
+"name": "trusted-create-html.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "urlskip.fn",
+"aliases": []
+},
+{
+"name": "href-sanitizer.js",
+"aliases": [
+"urlskip.js"
+]
+},
+{
+"name": "arglist-parser.fn",
+"aliases": []
+},
+{
+"name": "jsonpath.fn",
+"aliases": []
+},
+{
+"name": "proxy-tostring.fn",
+"aliases": []
+},
+{
+"name": "proxy-apply.fn",
+"aliases": []
+},
+{
+"name": "proxy-apply-config.js",
+"aliases": []
+},
+{
+"name": "edit-outbound-object.fn",
+"aliases": []
+},
+{
+"name": "edit-outbound-object.js",
+"aliases": []
+},
+{
+"name": "trusted-edit-outbound-object.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-edit.fn",
+"aliases": []
+},
+{
+"name": "json-edit.js",
+"aliases": []
+},
+{
+"name": "trusted-json-edit.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "edit-inbound-object.fn",
+"aliases": []
+},
+{
+"name": "edit-inbound-object.js",
+"aliases": []
+},
+{
+"name": "trusted-edit-inbound-object.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "edit-this-object.fn",
+"aliases": []
+},
+{
+"name": "edit-this-object.js",
+"aliases": []
+},
+{
+"name": "trusted-edit-this-object.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "edit-object-on-getter.fn",
+"aliases": []
+},
+{
+"name": "edit-object-on-getter.js",
+"aliases": []
+},
+{
+"name": "trusted-edit-object-on-getter.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "edit-object-on-setter.fn",
+"aliases": []
+},
+{
+"name": "edit-object-on-setter.js",
+"aliases": []
+},
+{
+"name": "trusted-edit-object-on-setter.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "edit-element-object.fn",
+"aliases": []
+},
+{
+"name": "edit-element-object.js",
+"aliases": []
+},
+{
+"name": "trusted-edit-element-object.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-edit-xhr-response.fn",
+"aliases": []
+},
+{
+"name": "json-edit-xhr-response.js",
+"aliases": []
+},
+{
+"name": "trusted-json-edit-xhr-response.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-edit-xhr-request.fn",
+"aliases": []
+},
+{
+"name": "json-edit-xhr-request.js",
+"aliases": []
+},
+{
+"name": "trusted-json-edit-xhr-request.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-edit-fetch-response.fn",
+"aliases": []
+},
+{
+"name": "json-edit-fetch-response.js",
+"aliases": []
+},
+{
+"name": "trusted-json-edit-fetch-response.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-edit-fetch-request.fn",
+"aliases": []
+},
+{
+"name": "edit-inbound-element.fn",
+"aliases": []
+},
+{
+"name": "trusted-edit-inbound-element.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-edit-fetch-request.js",
+"aliases": []
+},
+{
+"name": "trusted-json-edit-fetch-request.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "jsonl-edit.fn",
+"aliases": []
+},
+{
+"name": "jsonl-edit-xhr-response.fn",
+"aliases": []
+},
+{
+"name": "jsonl-edit-xhr-response.js",
+"aliases": []
+},
+{
+"name": "trusted-jsonl-edit-xhr-response.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "jsonl-edit-fetch-response.fn",
+"aliases": []
+},
+{
+"name": "jsonl-edit-fetch-response.js",
+"aliases": []
+},
+{
+"name": "trusted-jsonl-edit-fetch-response.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "matches-stack-trace.fn",
+"aliases": []
+},
+{
+"name": "abort-on-stack-trace.js",
+"aliases": [
+"aost.js"
+]
+},
+{
+"name": "object-find-owner.fn",
+"aliases": []
+},
+{
+"name": "object-prune.fn",
+"aliases": []
+},
+{
+"name": "trusted-prune-inbound-object.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-prune-outbound-object.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "json-prune.js",
+"aliases": []
+},
+{
+"name": "json-prune-fetch-response.js",
+"aliases": []
+},
+{
+"name": "json-prune-xhr-response.js",
+"aliases": []
+},
+{
+"name": "evaldata-prune.js",
+"aliases": []
+},
+{
+"name": "noeval-if.js",
+"aliases": [
+"prevent-eval-if.js"
+]
+},
+{
+"name": "prevent-addEventListener.js",
+"aliases": [
+"addEventListener-defuser.js",
+"aeld.js"
+]
+},
+{
+"name": "prevent-bab.js",
+"aliases": [
+"bab-defuser.js",
+"nobab.js"
+]
+},
+{
+"name": "prevent-clipboard-write.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "prevent-dialog.js",
+"aliases": []
+},
+{
+"name": "prevent-fetch.fn",
+"aliases": []
+},
+{
+"name": "prevent-fetch.js",
+"aliases": [
+"no-fetch-if.js"
+]
+},
+{
+"name": "trusted-prevent-fetch.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "freeze-element-property.js",
+"aliases": []
+},
+{
+"name": "prevent-innerHTML.js",
+"aliases": []
+},
+{
+"name": "prevent-navigation.js",
+"aliases": []
+},
+{
+"name": "range-parser.fn",
+"aliases": []
+},
+{
+"name": "prevent-setTimeout.js",
+"aliases": [
+"no-setTimeout-if.js",
+"nostif.js",
+"setTimeout-defuser.js"
+]
+},
+{
+"name": "prevent-setInterval.js",
+"aliases": [
+"no-setInterval-if.js",
+"nosiif.js",
+"setInterval-defuser.js"
+]
+},
+{
+"name": "prevent-requestAnimationFrame.js",
+"aliases": [
+"no-requestAnimationFrame-if.js",
+"norafif.js"
+]
+},
+{
+"name": "parse-replace.fn",
+"aliases": []
+},
+{
+"name": "validate-constant.fn",
+"aliases": []
+},
+{
+"name": "set-constant.fn",
+"aliases": []
+},
+{
+"name": "set-constant.js",
+"aliases": [
+"set.js"
+]
+},
+{
+"name": "trusted-set-constant.js",
+"aliases": [
+"trusted-set.js"
+],
+"requiresTrust": true
+},
+{
+"name": "trusted-replace-argument.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "spoof-css.js",
+"aliases": []
+},
+{
+"name": "modify-xhr-response.fn",
+"aliases": []
+},
+{
+"name": "prevent-xhr.fn",
+"aliases": []
+},
+{
+"name": "prevent-xhr.js",
+"aliases": [
+"no-xhr-if.js"
+]
+},
+{
+"name": "trusted-prevent-xhr.js",
+"aliases": []
+},
+{
+"name": "mpegdash-prune.js",
+"aliases": []
+},
+{
+"name": "get-safe-cookie-values.fn",
+"aliases": []
+},
+{
+"name": "get-all-cookies.fn",
+"aliases": []
+},
+{
+"name": "get-cookie.fn",
+"aliases": []
+},
+{
+"name": "set-cookie.fn",
+"aliases": []
+},
+{
+"name": "set-cookie.js",
+"aliases": []
+},
+{
+"name": "set-cookie-reload.js",
+"aliases": []
+},
+{
+"name": "trusted-set-cookie.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-set-cookie-reload.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "remove-cookie.js",
+"aliases": [
+"cookie-remover.js"
+]
+},
+{
+"name": "get-all-local-storage.fn",
+"aliases": []
+},
+{
+"name": "set-local-storage-item.fn",
+"aliases": []
+},
+{
+"name": "set-local-storage-item.js",
+"aliases": []
+},
+{
+"name": "set-session-storage-item.js",
+"aliases": []
+},
+{
+"name": "trusted-set-local-storage-item.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-set-session-storage-item.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "replace-node-text.fn",
+"aliases": []
+},
+{
+"name": "replace-fetch-response.fn",
+"aliases": []
+},
+{
+"name": "abort-on-property-read.js",
+"aliases": [
+"aopr.js"
+]
+},
+{
+"name": "abort-on-property-write.js",
+"aliases": [
+"aopw.js"
+]
+},
+{
+"name": "adjust-setInterval.js",
+"aliases": [
+"nano-setInterval-booster.js",
+"nano-sib.js"
+]
+},
+{
+"name": "adjust-setTimeout.js",
+"aliases": [
+"nano-setTimeout-booster.js",
+"nano-stb.js"
+]
+},
+{
+"name": "prevent-refresh.js",
+"aliases": [
+"refresh-defuser.js"
+]
+},
+{
+"name": "remove-class.js",
+"aliases": [
+"rc.js"
+]
+},
+{
+"name": "webrtc-if.js",
+"aliases": []
+},
+{
+"name": "prevent-window-open.js",
+"aliases": [
+"nowoif.js",
+"no-window-open-if.js",
+"window.open-defuser.js"
+]
+},
+{
+"name": "close-window.js",
+"aliases": [
+"window-close-if.js"
+]
+},
+{
+"name": "window.name-defuser.js",
+"aliases": []
+},
+{
+"name": "overlay-buster.js",
+"aliases": []
+},
+{
+"name": "alert-buster.js",
+"aliases": []
+},
+{
+"name": "nowebrtc.js",
+"aliases": []
+},
+{
+"name": "disable-newtab-links.js",
+"aliases": []
+},
+{
+"name": "xml-prune.js",
+"aliases": []
+},
+{
+"name": "m3u-prune.js",
+"aliases": []
+},
+{
+"name": "call-nothrow.js",
+"aliases": []
+},
+{
+"name": "remove-node-text.js",
+"aliases": [
+"rmnt.js"
+]
+},
+{
+"name": "prevent-canvas.js",
+"aliases": []
+},
+{
+"name": "multiup.js",
+"aliases": []
+},
+{
+"name": "break-on-call.js",
+"aliases": []
+},
+{
+"name": "trusted-replace-node-text.js",
+"aliases": [
+"trusted-rpnt.js",
+"replace-node-text.js",
+"rpnt.js"
+],
+"requiresTrust": true
+},
+{
+"name": "trusted-replace-fetch-response.js",
+"aliases": [
+"trusted-rpfr.js"
+],
+"requiresTrust": true
+},
+{
+"name": "trusted-replace-xhr-response.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-click-element.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-replace-outbound-text.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-suppress-native-method.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-prevent-dom-bypass.js",
+"aliases": [],
+"requiresTrust": true
+},
+{
+"name": "trusted-override-element-method.js",
+"aliases": [],
+"requiresTrust": true
+}
+]
+}

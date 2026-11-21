@@ -1,0 +1,59 @@
+<!doctype html><meta charset="utf-8"><title>attack {{host}}</title>
+<!-- Rows A3b, A8, A9, A10 (docs/WAVE-B3.md §12.2), chosen with ?p=. -->
+<pre id="out">pending</pre>
+<script>
+(async () => {
+  const out = {};
+  const q = new URLSearchParams(location.search);
+  const p = (q.get('p') || '').split(',');
+  if (p.includes('a8')) {
+    try { history.pushState(null, '', '{{origin:site-a}}/'); out.a8 = 'no error'; } catch (e) { out.a8 = 'threw:' + e.name; }
+    out.a8location = location.href;
+  }
+  if (p.includes('a9')) {
+    try { document.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', { violatedDirective: 'img-src', effectiveDirective: 'img-src', originalPolicy: 'x', disposition: 'enforce', blockedURI: 'http://x/', statusCode: 200 })); out.a9 = 'dispatched'; } catch (e) { out.a9 = 'threw:' + e.name; }
+  }
+  if (p.includes('a3b')) {
+    const f = document.createElement('iframe');
+    document.body.appendChild(f);
+    const c = window[0];
+    try { c.History.prototype.pushState.call(history, null, '', '/engine/?x'); out.pushEngine = 'no error:' + location.pathname; } catch (e) { out.pushEngine = 'threw:' + e.name; }
+    const sw = (c.navigator && c.navigator.serviceWorker) || navigator.serviceWorker;
+    out.hasSw = !!(sw && sw.controller);
+    out.signals = 0;
+    out.otherMessages = 0;
+    // GNOME's signals (sw-hello, sw-held, uv-blocked, uv-download, …) must never reach a page; other messages (Scramjet
+    // controller's revive broadcast to every window) are counted apart.
+    try { (navigator.serviceWorker || sw).addEventListener('message', (e) => { const t = e.data && e.data.type; if (typeof t === 'string' && /^(sw-|uv-)/.test(t)) out.signals++; else out.otherMessages++; }); } catch (e) {}
+    try {
+      const settings = { engines: { scramjet: true, ultraviolet: true }, engine: 'auto', autoFallback: false, transport: 'libcurl', route: { kind: 'default' },
+        privacy: { webrtc: 'allow', sendGpc: false, doNotTrack: false, referrer: 'default', stripTrackingParams: false, cookies: 'all' },
+        extensions: { enabled: { adblock: false, trackers: false, privacy: false, cookies: false, cosmetic: false }, lists: [], allowlist: ['*.localhost'], perSite: {}, cosmeticAggressive: false, cookieRules: {} },
+        keys: { combos: [], apple: false } };
+      sw.controller.postMessage({ type: 'gnome-blocker-config', settings, setId: null });
+      sw.controller.postMessage({ type: 'gnome-blocker-context', docs: [[location.href, 'http://ads.localhost/']], navs: [], drop: [], reset: true });
+      sw.controller.postMessage({ type: 'gnome-blocker-engines', setId: 'a'.repeat(64), groups: [{ group: 'ads', bytes: new ArrayBuffer(8) }] });
+      sw.controller.postMessage({ type: 'gnome-claim' });
+      out.posted = true;
+    } catch (e) { out.posted = 'threw:' + e.name; }
+    await new Promise((r) => setTimeout(r, 1500));
+    // a blocked request stays blocked after the forged messages
+    out.after = await fetch('{{origin:ads}}/echo').then((r) => r.status, () => 'error');
+    out.afterImg = await new Promise((r) => { const i = new Image(); i.onload = () => r('load'); i.onerror = () => r('error'); i.src = '{{origin:trk}}/beacon?id=a3b'; });
+  }
+  if (p.includes('a10')) {
+    const url = '{{origin:ads}}/ws'.replace(/^http/, 'ws');
+    const open = (mk) => new Promise((resolve) => {
+      let ws; try { ws = mk(); } catch (e) { resolve('threw:' + e.name); return; }
+      const t = setTimeout(() => resolve('timeout'), 6000);
+      ws.onopen = () => { clearTimeout(t); try { ws.close(); } catch (e) {} resolve('open'); };
+      ws.onerror = () => { clearTimeout(t); resolve('error'); };
+      if (ws.addEventListener) { ws.addEventListener('open', () => { clearTimeout(t); resolve('open'); }); ws.addEventListener('error', () => { clearTimeout(t); resolve('error'); }); }
+    });
+    out.a10ws = await open(() => new WebSocket(url));
+    const c = window[Symbol.for('scramjet client global')];
+    out.a10client = c && c.bare ? await open(() => c.bare.createWebSocket(url, [], [])) : 'no client';
+  }
+  document.getElementById('out').textContent = JSON.stringify(out);
+})();
+</script>

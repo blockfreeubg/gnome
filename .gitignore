@@ -1,0 +1,14 @@
+/target/
+node_modules/
+/frontend/dist/
+/data/
+*.log
+.env
+.env.*
+!.env.example
+/bench/results/raw/
+/tests/e2e/test-results/
+/tests/e2e/playwright-report/
+.DS_Store
+# HolyWisp binaries and logs from services/holywisp/fetch-build.sh
+/services/holywisp/build/

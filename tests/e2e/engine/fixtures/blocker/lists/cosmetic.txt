@@ -1,0 +1,78 @@
+! gnome-e2e: id=e2e-cosmetic category=ads trusted=false default=true name=GNOME e2e cosmetic (untrusted)
+! Lane x2's rows CS1-CS18 (docs/WAVE-B3.md §12.2; suite tests/e2e/engine/suites/blocker-cosmetic.mjs). Every rule
+! names a gnome-cs* class, id, path or variable, or applies to cdn.localhost only, so other lanes' rows on the shared
+! fixture hosts never meet it. Scriptlets that set cookies or storage apply to cdn.localhost only.
+!
+! CS1 site-specific hiding (CS9: per-site cosmetic off / allowlisted)
+site-a.localhost##.gnome-cs1-ad
+! CS2/CS3 generic rules (only with cosmeticAggressive), CS3: added after load
+##.gnome-cs2-generic
+##.gnome-cs3-late
+##.gnome-cs3-added
+###gnome-cs3-id
+! CS4 :style(); CS5 unsafe :style() (dropped by the sanitizer: the computed style keeps no image, no sheet names the URL)
+site-a.localhost##.gnome-cs4:style(color: rgb(1, 2, 3) !important)
+site-a.localhost##.gnome-cs5a:style(background-image: url(http://cdn.localhost/beacon?id=cs5a) !important)
+site-a.localhost##.gnome-cs5b:style(background-image: URL(http://cdn.localhost/beacon?id=cs5b) !important)
+site-a.localhost##.gnome-cs5c {background-image: url(http://cdn.localhost/beacon?id=cs5c) !important}
+! CS5 (lane review): a selector that opens a block of its own (the library pastes selectors into its stylesheet text
+! unchanged): dropped by the sanitizer and by validateSelectors, so the list's declarations never apply
+cdn.localhost##.gnome-cs5d{background-image:url(http://cdn.localhost/beacon?id=cs5d) !important;a:b
+cdn.localhost##.gnome-cs5e{color:rgb(9, 8, 7) !important;a:b:style(opacity: 0.9 !important)
+cdn.localhost##.gnome-cs5-ctl
+! CS6 ABP CSS injection, converted to :style()
+site-a.localhost##.gnome-cs6 {opacity: 0.5 !important}
+! CS7 an invalid selector beside valid ones (the library keeps it in a DOM-less build; validateSelectors drops it), and
+! an at-rule the parser gives a selectorText (lane review: it would turn site-a's whole hiding rule into an @page rule)
+site-a.localhost##.gnome-cs7-bad:nth-child(2n+)
+site-a.localhost##@page :first
+site-a.localhost##.gnome-cs7-a
+site-a.localhost##.gnome-cs7-b
+! CS8 #@#, $generichide, $elemhide
+##.gnome-cs8-ex
+site-b.localhost#@#.gnome-cs8-ex
+##.gnome-cs8-gen
+site-b.localhost##.gnome-cs8-site
+! (^ matches the port separator: the fixture server listens on a port)
+@@||site-b.localhost^*/cosmetic/cs8-generichide.html$generichide
+@@||site-b.localhost^*/cosmetic/cs8-elemhide.html$elemhide
+! CS10 a site-b frame inside site-a gets site-b's rules
+site-b.localhost##.gnome-cs10-b
+site-a.localhost##.gnome-cs10-a
+! CS11 set-constant before the page's scripts; the scriptlet sees the engine's virtual location
+site-a.localhost##+js(set-constant, gnomeCs11, 42)
+site-a.localhost##+js(window-close-if, /^http:\/\/site-a\.localhost:\d+\/cosmetic\/cs11-loc\.html/)
+! CS12 abort-on-property-read, json-prune
+site-a.localhost##+js(abort-on-property-read, gnomeCs12Bait)
+site-a.localhost##+js(json-prune, gnomeCs12Ad)
+! CS13 scriptlets that need trust do nothing from this (untrusted) list
+cdn.localhost##+js(trusted-set-cookie, gnome_cs13_untrusted, yes)
+cdn.localhost##+js(rpnt, #text, gnome-cs13-original, gnome-cs13-rpnt)
+cdn.localhost##+js(replace-node-text, #text, gnome-cs13-second, gnome-cs13-rnt)
+cdn.localhost##+js(prevent-clipboard-write)
+cdn.localhost##+js( trusted-set-cookie, gnome_cs13_spaced, yes)
+cdn.localhost##+js(trusted-set-local-storage-item, gnome_cs13_untrusted_ls, yes)
+! CS14 rules that would hide the root, the body or find-in-page highlights (dropped by validateSelectors)
+cdn.localhost##body
+cdn.localhost##*
+cdn.localhost##:root
+cdn.localhost##html
+cdn.localhost##body:not(.x)
+cdn.localhost##::highlight(gnome-find):style(background-color: transparent !important; color: inherit !important)
+cdn.localhost##::HIGHLIGHT(gnome-find-active):style(background-color: transparent !important)
+cdn.localhost##::h\69ghlight(gnome-find):style(background-color: transparent !important)
+cdn.localhost##.gnome-cs14-ok
+! CS16 set-cookie and set-local-storage-item land in the engine's virtual jar and storage
+cdn.localhost##+js(set-cookie, gnome_cs16, yes)
+cdn.localhost##+js(set-local-storage-item, gnome_cs16_ls, yes)
+! CS17 nowoif stops a click-triggered popunder
+site-a.localhost##+js(nowoif, gnome-cs17-popunder)
+! CS18 generic rules for the page that replaced its natives
+##.gnome-cs18-gen
+! cs-late (lane review): a document that opened before the engines were ready gets its styles and generic rules when
+! they are, not its scriptlets
+site-b.localhost##.gnome-cslate-ad
+##.gnome-cslate-gen
+site-b.localhost##+js(set-constant, gnomeCsLate, 7)
+! The link-address limitation (measured): both engines rewrite href attributes in proxied pages
+site-a.localhost##a[href^="http://ads.localhost"]

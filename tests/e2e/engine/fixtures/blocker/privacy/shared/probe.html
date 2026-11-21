@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>privacy probe</title>
+</head>
+<body>
+<h1>privacy probe {{host}}</h1>
+<pre id="out">pending</pre>
+<a id="link" href="#">next</a>
+<script>
+  // Lane x3 (docs/WAVE-B3.md §12.2 P1-P12): what a page sees of GNOME's privacy protection. The query names what to
+  // load: img=<url> (an image, e.g. a /beacon on another site), to=<url> (the #link's target), frame=<url>.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    function probe() {
+      var d = Object.getOwnPropertyDescriptor(Document.prototype, 'referrer');
+      return {
+        url: location.href,
+        gpc: navigator.globalPrivacyControl === undefined ? null : navigator.globalPrivacyControl,
+        dnt: navigator.doNotTrack === undefined ? null : navigator.doNotTrack,
+        referrer: document.referrer,
+        referrerViaDescriptor: d && d.get ? d.get.call(document) : null,
+        // Ultraviolet injects the browser's referrer of the document request (the whole proxied URL) as a page global.
+        uvReferrer: typeof self.__uv$referrer === 'string' ? self.__uv$referrer : null,
+      };
+    }
+    window.probe = probe;
+    window.echo = function (u, init) {
+      return fetch(u, init).then(function (r) { return r.json(); }).catch(function (e) { return { error: String(e) }; });
+    };
+    window.workerEcho = function (u) {
+      return new Promise(function (resolve) {
+        var done = false;
+        var finish = function (v) { if (!done) { done = true; resolve(v); } };
+        try {
+          var w = new Worker('probe-worker.js');
+          w.onmessage = function (e) { finish(e.data); };
+          w.onerror = function (e) { finish({ error: String(e.message || e) }); };
+          w.postMessage(u);
+        } catch (e) {
+          finish({ error: String(e) });
+        }
+        setTimeout(function () { finish({ error: 'timeout' }); }, 15000);
+      });
+    };
+    if (q.get('img')) {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.src = q.get('img');
+      document.body.appendChild(img);
+    }
+    if (q.get('frame')) {
+      var f = document.createElement('iframe');
+      f.id = 'frame';
+      f.src = q.get('frame');
+      document.body.appendChild(f);
+    }
+    if (q.get('to')) document.getElementById('link').href = q.get('to');
+    document.getElementById('out').textContent = JSON.stringify(probe());
+  })();
+</script>
+</body>
+</html>

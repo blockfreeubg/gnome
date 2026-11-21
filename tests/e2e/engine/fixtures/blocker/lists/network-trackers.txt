@@ -1,0 +1,6 @@
+! gnome-e2e: id=e2e-network-trackers category=privacy trusted=false default=true name=GNOME e2e network (trackers)
+! Lane x1's rows N3, N4, N5, N11, N18 (docs/WAVE-B3.md §12.2): a privacy list, so its blocks count as trackers; its
+! exception and $badfilter lines act on the rules of the ads test list (shared lines, D1). Test data (CC0-1.0).
+||trk.localhost^$third-party
+@@||ads.localhost^*/network/ok.js^
+||cdn.localhost^*/network/bf.js^$badfilter

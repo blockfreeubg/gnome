@@ -1,0 +1,3 @@
+! gnome-e2e: id=e2e-network-security category=security trusted=false default=true name=GNOME e2e network (scam and malware)
+! Lane x1's row N9 (docs/WAVE-B3.md §12.2): a badware list, so its blocks count as security. Test data (CC0-1.0).
+||bad.localhost^

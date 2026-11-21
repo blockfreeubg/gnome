@@ -1,0 +1,44 @@
+<!doctype html><meta charset="utf-8"><title>a0</title>
+<!-- Row A0 (docs/WAVE-B3.md §12.2): paths from an ordinary page to the engine-host window or realm. -->
+<pre id="out">pending</pre>
+<script>
+(() => {
+  const out = {};
+  const hostWin = (w) => { try { return !!(w && w.__gnomeEngineHost); } catch (e) { return false; } };
+  const viewOfEl = (el) => { try { return el && el.ownerDocument ? el.ownerDocument.defaultView : null; } catch (e) { return null; } };
+  const realmOf = (o) => { try { return o.constructor.constructor('return this')(); } catch (e) { return null; } };
+  const verdict = (v) => (v === true ? 'ENGINE-HOST' : v === false ? 'no' : String(v));
+  const probe = (name, fn) => { try { out[name] = verdict(fn()); } catch (e) { out[name] = 'threw:' + (e && e.name); } };
+  const f = document.createElement('iframe');
+  document.body.appendChild(f);
+  const child = window[0];
+  // step 2's borrow-natives: a fresh child realm's native getters called on this window
+  for (const k of ['parent', 'top', 'frameElement']) {
+    probe('borrow-' + k, () => {
+      const d = Object.getOwnPropertyDescriptor(child, k) || Object.getOwnPropertyDescriptor(child.Window.prototype, k);
+      const v = d.get.call(window);
+      return k === 'frameElement' ? !!v && (hostWin(viewOfEl(v)) || hostWin(realmOf(v))) : hostWin(v);
+    });
+  }
+  probe('frameElement.ownerDocument.defaultView', () => { const fe = window.frameElement; return fe === null ? 'null' : hostWin(viewOfEl(fe)); });
+  probe('frameElement.constructor.constructor', () => { const fe = window.frameElement; return fe === null ? 'null' : hostWin(realmOf(fe)); });
+  probe('own frameElement getter', () => {
+    const d = Object.getOwnPropertyDescriptor(window, 'frameElement') || Object.getOwnPropertyDescriptor(Window.prototype, 'frameElement');
+    const v = d.get.call(window);
+    return v === null ? 'null' : hostWin(viewOfEl(v));
+  });
+  probe('window[0] Window.prototype frameElement', () => {
+    const d = Object.getOwnPropertyDescriptor(child.Window.prototype, 'frameElement') || Object.getOwnPropertyDescriptor(child, 'frameElement');
+    const v = d.get.call(window);
+    return v === null ? 'null' : hostWin(viewOfEl(v));
+  });
+  probe('scramjet client descriptors', () => {
+    const c = window[Symbol.for('scramjet client global')];
+    if (!c) return 'no client';
+    const v = c.descriptors.get('window.frameElement', window);
+    return v === null ? 'null' : hostWin(viewOfEl(v));
+  });
+  probe('window[0].parent.parent', () => hostWin(child.parent.parent));
+  document.getElementById('out').textContent = JSON.stringify(out);
+})();
+</script>

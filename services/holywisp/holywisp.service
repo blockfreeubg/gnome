@@ -1,0 +1,86 @@
+# holywisp.service: GNOME's primary Wisp server (direct egress) behind gnome-server's /wisp/ gateway.
+#
+# Install (services/holywisp/README.md "Run"):
+#   install -m 0755 build/<arch>/holywisp /usr/local/bin/holywisp
+#   install -D -m 0644 gnome.conf /etc/holywisp/holywisp.conf   # no secrets; the dynamic UID must read it
+#   install -m 0644 holywisp.service holywisp@.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now holywisp.service
+#
+# Threat model: the process parses attacker-controlled bytes and opens sockets to attacker-chosen
+# hosts, so a memory-safety bug in it must not become a foothold on the host. It runs as a dynamic,
+# unprivileged UID with no capabilities and a read-only view of the system.
+[Unit]
+Description=HolyWisp Wisp server for GNOME (direct egress)
+Documentation=https://github.com/Fracital/holyWisp
+After=network-online.target
+Wants=network-online.target
+# Keep retrying: a relay should come back by itself (backoff below), except after a config error.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/holywisp --config /etc/holywisp/holywisp.conf
+# NO ExecReload on purpose. HolyWisp has no config reload and installs no SIGHUP handler, so SIGHUP
+# terminates it; systemd counts that as a clean exit. Upstream's unit maps `systemctl reload` to
+# SIGHUP, which stops the relay. Without ExecReload, `systemctl reload holywisp` is refused; apply
+# config changes with `systemctl restart holywisp` (open Wisp connections drop; clients reconnect).
+Restart=always
+RestartSec=2s
+# systemd >= 254: back off 2 s -> 60 s across repeated failures (older versions ignore both keys).
+RestartSteps=6
+RestartMaxDelaySec=60s
+# Exit 2 = config parse error (unknown key, bad value): restarting cannot fix it.
+RestartPreventExitStatus=2
+# SIGTERM stops HolyWisp at once (no draining); clients see the TCP connection close.
+TimeoutStopSec=10s
+
+# ---- identity and limits ----
+# A transient UID per unit. Besides isolation this defeats HolyWisp's SO_REUSEPORT pitfall: the
+# kernel lets sockets share a port only within one UID, so a second instance (another unit, or a
+# stray manual run) fails to bind 6001 instead of silently taking part of the traffic.
+DynamicUser=yes
+# HolyWisp never raises its own fd limit: every WebSocket and every stream is one descriptor.
+LimitNOFILE=262144
+MemoryMax=1G
+TasksMax=512
+
+# ---- sandbox ----
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+KeyringMode=private
+UMask=0077
+# TCP/UDP over IPv4/IPv6 only: no AF_UNIX, AF_NETLINK, AF_PACKET. GNOME's static musl build resolves
+# names from /etc/hosts and /etc/resolv.conf over plain UDP/TCP, so it needs nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @obsolete @cpu-emulation @swap @reboot @mount @debug @raw-io @resources
+SystemCallErrorNumber=EPERM
+# Optional defence in depth on top of HolyWisp's own egress policy (README.md "Run"): refuse
+# private/link-local destinations at the cgroup level. Keep your DNS server reachable (a resolver on
+# the LAN, e.g. 192.168.1.1, must be allowed explicitly) and keep localhost for the gateway.
+#IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10
+#IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

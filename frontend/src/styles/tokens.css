@@ -1,0 +1,292 @@
+/*
+ * GNOME design tokens, design v2 (docs/DESIGN.md). Dark is the default theme; `.theme-light` on <html> switches
+ * palettes. The settings engine (src/settings/apply.ts) and the pre-paint boot script in index.html override
+ * individual variables inline on <html> (accent derivatives, custom colors, font, density, radius, glass, motion).
+ * Components must only consume these variables — never hard-coded colors.
+ *
+ * v2 language: a near-black neutral base with monochrome chrome (active states are a white tint in a rounded
+ * square), glass cards and floating layers, one accent (mint by default) for actions, links, focus and progress,
+ * Inter for the interface and Montserrat for the wordmark and headings.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Palette: dark (default) ─────────────────────────────────────────── */
+  --bg: #0a0a0a;
+  --bg-elevated: #0e0e0e;
+  --surface-1: #131313;
+  --surface-2: #191919;
+  --surface-3: #232323;
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+  --text: #f5f5f5;
+  --text-2: #ababab;
+  --text-3: #8f8f8f; /* ≥ 4.5:1 on every dark surface up to --surface-3, incl. hovered rows (DESIGN.md §3) */
+  --accent: #9ff0c8;
+  --accent-strong: #c2f8dd;
+  --accent-ink: #03170d;
+  --accent-soft: rgba(159, 240, 200, 0.14);
+  --moss: #b3cf8a;
+  --slate: #a4b4f2;
+  --success: #7fe0a6;
+  --warning: #f2c46b;
+  --danger: #ff8a78; /* tone text stays ≥ 4.5:1 on its own soft tint, also over --surface-2 */
+  --danger-ink: #1f0603;
+  --focus: #c2f8dd;
+  --scrim: rgba(0, 0, 0, 0.62);
+
+  /* Derived state tints (kept as tokens so the light theme can tune them) */
+  --moss-soft: rgba(179, 207, 138, 0.14);
+  --slate-soft: rgba(164, 180, 242, 0.14);
+  --success-soft: rgba(127, 224, 166, 0.14);
+  --warning-soft: rgba(242, 196, 107, 0.14);
+  --danger-soft: rgba(255, 138, 120, 0.14);
+  --hover: rgba(255, 255, 255, 0.05);
+  --press: rgba(255, 255, 255, 0.08);
+  /* Selected / current item in monochrome chrome (rail, tabs, settings nav): a white tint in a rounded square with
+     a faint inner ring. Secondary lines on it use --text-2 (--text-3 drops below 4.5:1 over raised surfaces). */
+  --selected: rgba(255, 255, 255, 0.1);
+  --selected-ring: rgba(255, 255, 255, 0.14);
+  --glass-highlight: rgba(255, 255, 255, 0.06);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --skeleton-base: rgba(255, 255, 255, 0.05);
+  --skeleton-shine: rgba(255, 255, 255, 0.09);
+  --mark-backdrop: rgba(255, 255, 255, 0.03);
+  /* Fields inside cards and dialogs sit a step below the card (ivy-style wells). */
+  --field-bg: #070707;
+  --field-border: rgba(255, 255, 255, 0.1);
+  --field-border-hover: rgba(255, 255, 255, 0.18);
+  /* Focus treatment for fields: accent border + a soft 3px halo (the 2px outline ring is for everything else). */
+  --focus-border: color-mix(in oklab, var(--accent) 70%, transparent);
+  --focus-halo: color-mix(in oklab, var(--accent) 16%, transparent);
+
+  /* ── Elevation ───────────────────────────────────────────────────────── */
+  --shadow-pop:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 40px -12px rgba(0, 0, 0, 0.72), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-sheet: 0 0 0 1px var(--hairline-strong), 0 24px 64px -12px rgba(0, 0, 0, 0.72);
+  /* Cards: dialogs, sign-in, the access-code prompt, page panels (ivy). */
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 80px rgba(0, 0, 0, 0.6);
+  /* Raised tiles on pages (novene): a hairline lift, no glow. */
+  --shadow-raise: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -12px rgba(0, 0, 0, 0.7);
+  /* Primary buttons: a soft accent bloom under the fill. */
+  --shadow-accent: 0 8px 24px color-mix(in oklab, var(--accent) 18%, transparent);
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  --font-size: 14px;
+  --font-sans-fallback: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-ui: 'Inter Variable', var(--font-sans-fallback);
+  --font-display: 'Montserrat Variable', var(--font-sans-fallback);
+  --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Montserrat has no extra axes; kept so older components that set it stay valid. */
+  --display-variation: normal;
+  --weight-display: 800;
+  --weight-heading: 700;
+  --weight-wordmark: 800;
+
+  --text-xs: 0.786rem;
+  --text-sm: 0.857rem;
+  --text-md: 1rem;
+  --text-lg: 1.143rem;
+  --text-xl: 1.429rem;
+  --text-2xl: 1.857rem;
+  --text-3xl: 2.571rem;
+  --text-4xl: 3.429rem;
+
+  --lh-body: 1.5;
+  --lh-snug: 1.3;
+  --lh-display: 1.15;
+  --tracking-display: -0.03em;
+  --tracking-heading: -0.02em;
+  --tracking-eyebrow: 0.08em;
+  --tracking-wordmark: -0.02em;
+
+  /* ── Space (4px grid) ────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── Density (compact 0.85 · comfortable 1 · spacious 1.15) ──────────── */
+  --density: 1;
+  --control-h: calc(2.4286rem * var(--density)); /* 34px */
+  --control-h-sm: calc(2rem * var(--density)); /* 28px */
+  --control-h-lg: calc(3.1429rem * var(--density)); /* 44px */
+  --control-px: calc(0.9286rem * var(--density));
+  --row-h: calc(2.7143rem * var(--density));
+  /* Menu items and listbox options. */
+  --item-h: calc(2.2857rem * var(--density));
+  --pad-y: calc(var(--space-2) * var(--density));
+  /* Smallest hit target (DESIGN.md §1.6): small controls extend their hit area invisibly up to this size. */
+  --hit-min: 32px;
+
+  /* ── Radius (base --radius from Settings → Appearance, default 10px) ──── */
+  --radius: 10px;
+  --radius-sm: max(2px, calc(var(--radius) - 4px));
+  --radius-lg: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) * 1.6);
+  --radius-2xl: calc(var(--radius) * 2.4);
+  --radius-pill: 999px;
+
+  /* ── Glass ───────────────────────────────────────────────────────────── */
+  --glass-opacity: 0.82;
+  --blur: 16px;
+  /* Floating layers: popovers, toasts, sheets. */
+  --glass-bg: color-mix(in oklab, var(--surface-2) calc(var(--glass-opacity) * 100%), transparent);
+  /* Text-dense layers (menus, listboxes, palette, tooltips) stay legible even where backdrop blur is not rendered. */
+  --glass-bg-dense: color-mix(in oklab, var(--surface-2) calc(min(1, var(--glass-opacity) + 0.14) * 100%), transparent);
+  /* Cards: dialogs, sign-in and access-code cards, page panels. */
+  --glass-bg-card: color-mix(in oklab, var(--surface-1) calc(min(1, var(--glass-opacity) + 0.12) * 100%), transparent);
+  /* Window chrome: tab strip, toolbar, rail, bookmarks bar, mobile bottom bar. */
+  --chrome-bg: color-mix(in oklab, var(--bg-elevated) calc(max(0.5, var(--glass-opacity) - 0.1) * 100%), transparent);
+  --glass-filter: blur(var(--blur)) saturate(1.3);
+  --chrome-filter: blur(calc(var(--blur) * 0.75)) saturate(1.2);
+  --glass-border: var(--hairline-strong);
+  --glass-inset: inset 0 1px 0 var(--glass-highlight);
+
+  /* ── Motion ──────────────────────────────────────────────────────────── */
+  --motion: 1; /* none 0 · reduced 0.5 · normal 1 · expressive 1.25 */
+  --motion-move: 1; /* 0 when translations are disabled (reduced / none) */
+  --dur-1: 90ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --dur-4: 360ms;
+  --t-1: calc(var(--dur-1) * var(--motion));
+  --t-2: calc(var(--dur-2) * var(--motion));
+  --t-3: calc(var(--dur-3) * var(--motion));
+  --t-4: calc(var(--dur-4) * var(--motion));
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --rise: calc(6px * var(--motion-move));
+  --press-scale: calc(1 - 0.02 * var(--motion-move));
+
+  /* ── Iconography ─────────────────────────────────────────────────────── */
+  --icon-stroke: 1.75;
+
+  /* ── Layout ──────────────────────────────────────────────────────────── */
+  --tabstrip-h: 38px;
+  --toolbar-h: 50px;
+  --bookmarks-h: 32px;
+  --rail-w-compact: 52px;
+  --rail-w-expanded: 212px;
+  --rail-item: 34px;
+  --bottom-bar-h: 58px;
+  --page-max: 1200px;
+  --page-max-narrow: 960px;
+  --page-pad-x: clamp(20px, 4vw, 48px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+
+  /* ── Layers (fallback when the Popover API / top layer is unavailable) ── */
+  --z-rail: 20;
+  --z-sticky: 30;
+  --z-overlay: 100;
+  --z-popover: 200;
+  --z-toast: 300;
+  --z-progress: 400;
+}
+
+/* ── Palette: light (same family: paper-white neutrals, deep-jade accent) ─ */
+:root.theme-light {
+  color-scheme: light;
+  --bg: #f4f4f4;
+  --bg-elevated: #fafafa;
+  --surface-1: #fbfbfb;
+  --surface-2: #ffffff;
+  --surface-3: #e8e8e8;
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.14);
+  --text: #111111;
+  --text-2: #4d4d4d;
+  --text-3: #666666; /* ≥ 4.5:1 on --bg, --bg-elevated and hovered rows */
+  --accent: #0b7a4e; /* deep jade (the mint family); ≥ 4.5:1 as text on every light surface */
+  --accent-strong: #086640;
+  --accent-ink: #f4fff9;
+  --accent-soft: rgba(11, 122, 78, 0.12);
+  --moss: #4c6a1f;
+  --slate: #3f4fa3;
+  --success: #16733f;
+  --warning: #8a5a00;
+  --danger: #b3261e; /* tone text stays ≥ 4.5:1 on its own soft tint (Tag, Badge, danger menu items) */
+  --danger-ink: #fff8f6;
+  --focus: #0b7a4e;
+  --scrim: rgba(10, 10, 10, 0.32);
+
+  --moss-soft: rgba(76, 106, 31, 0.12);
+  --slate-soft: rgba(63, 79, 163, 0.12);
+  --success-soft: rgba(22, 115, 63, 0.12);
+  --warning-soft: rgba(138, 90, 0, 0.12);
+  --danger-soft: rgba(179, 38, 30, 0.1);
+  --hover: rgba(0, 0, 0, 0.045);
+  --press: rgba(0, 0, 0, 0.08);
+  --selected: rgba(0, 0, 0, 0.06);
+  --selected-ring: rgba(0, 0, 0, 0.1);
+  --glass-highlight: rgba(255, 255, 255, 0.7);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --skeleton-base: rgba(0, 0, 0, 0.05);
+  --skeleton-shine: rgba(0, 0, 0, 0.09);
+  --mark-backdrop: rgba(0, 0, 0, 0.03);
+  --field-bg: #ffffff;
+  --field-border: rgba(0, 0, 0, 0.14);
+  --field-border-hover: rgba(0, 0, 0, 0.24);
+
+  --shadow-pop:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 16px 40px -14px rgba(0, 0, 0, 0.22), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --shadow-sheet: 0 0 0 1px var(--hairline-strong), 0 24px 64px -16px rgba(0, 0, 0, 0.24);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 24px 64px -20px rgba(0, 0, 0, 0.22), 0 2px 6px rgba(0, 0, 0, 0.05);
+  --shadow-raise: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px -14px rgba(0, 0, 0, 0.2);
+  --shadow-accent: 0 8px 22px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+/* Touch screens: hit targets of at least 40px (DESIGN.md §1.6). Controls and stacked rows (menus, listboxes) get
+   taller; small isolated controls (checkboxes, switches, swatches) keep their look and extend their hit area. */
+@media (pointer: coarse) {
+  :root {
+    --hit-min: 40px;
+    --control-h: max(40px, calc(2.4286rem * var(--density)));
+    --control-h-sm: max(40px, calc(2rem * var(--density)));
+    --control-h-lg: max(44px, calc(3.1429rem * var(--density)));
+    --item-h: max(40px, calc(2.2857rem * var(--density)));
+    --row-h: max(44px, calc(2.7143rem * var(--density)));
+    --rail-item: 40px;
+    --rail-w-compact: 56px;
+  }
+}
+
+/* Opaque surfaces: "Reduce transparency", blur 0, GPU effects off, or no backdrop-filter support. */
+:root.reduce-transparency,
+:root.no-gpu-effects {
+  --glass-bg: var(--surface-2);
+  --glass-bg-dense: var(--surface-2);
+  --glass-bg-card: var(--surface-1);
+  --chrome-bg: var(--bg-elevated);
+  --glass-filter: none;
+  --chrome-filter: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass-bg: var(--surface-2);
+    --glass-bg-dense: var(--surface-2);
+    --glass-bg-card: var(--surface-1);
+    --chrome-bg: var(--bg-elevated);
+    --glass-filter: none;
+    --chrome-filter: none;
+  }
+}
+
+/* Flat mode: no shadows on floating layers either. */
+:root.no-gpu-effects {
+  --shadow-pop: 0 0 0 1px var(--hairline-strong);
+  --shadow-sheet: 0 0 0 1px var(--hairline-strong);
+  --shadow-card: 0 0 0 1px var(--hairline);
+  --shadow-raise: none;
+  --shadow-accent: none;
+}

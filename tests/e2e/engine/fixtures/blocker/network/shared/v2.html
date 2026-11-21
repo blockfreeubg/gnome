@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><title>v2 {{host}}</title>
+<!-- Row V2 (docs/WAVE-B3.md §12.2, D15): ?d=<n> nests n more frames of this page (each in the one before, from the
+     markup), and every frame loads a script of its own host. On an ads.localhost page that script is first-party: the
+     test list's ||ads.localhost^$third-party blocks it only where the service worker judged the request without the
+     page's context (unknown context is third-party, D15). #out: {ran, depth}; the top's #out adds {frames: [...]}.
+     Test data written for GNOME's e2e tests (CC0-1.0). -->
+<pre id="out">pending</pre>
+<script src="/network/ad.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const d = Math.max(0, Math.min(30, Number(q.get('d') || 0)));
+  if (d > 0) document.write('<iframe src="v2.html?d=' + (d - 1) + '"></iframe>');
+  const mine = () => ({ ran: window.gnomeAdRan || 0, depth: d });
+  addEventListener('load', () => {
+    if (q.get('top') !== '1') {
+      document.getElementById('out').textContent = JSON.stringify(mine());
+      return;
+    }
+    // the top walks down the chain once every frame reported
+    const t0 = Date.now();
+    const walk = () => {
+      const frames = [];
+      let w = window;
+      for (let i = 0; i < 31; i++) {
+        let f;
+        try { f = w.frames[0]; } catch (e) { break; }
+        if (!f) break;
+        let o = null;
+        try { o = f.document.getElementById('out').textContent; } catch (e) { o = 'unreadable'; }
+        frames.push(o);
+        w = f;
+      }
+      const done = frames.length >= d && frames.every((o) => o && o !== 'pending');
+      if (done || Date.now() - t0 > 20000) document.getElementById('out').textContent = JSON.stringify({ ...mine(), frames: frames.map((o) => { try { return JSON.parse(o); } catch (e) { return o; } }) });
+      else setTimeout(walk, 200);
+    };
+    walk();
+  });
+</script>

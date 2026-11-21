@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>cookie top {{host}}</title></head>
+<body>
+<pre id="out">pending</pre>
+<a id="link" href="#">next</a>
+<script>
+  // The top page of rows K1-K12: `?frame=<url>` embeds a frame, `?to=<url>` is the #link's target, `?img=<url>` loads
+  // an image. topRealmRead() reads the frame document's cookie through THIS realm's Document.prototype descriptor
+  // (row K3b: GNOME's wrapper decides by `this`, whatever realm the getter comes from).
+  (function () {
+    var q = new URLSearchParams(location.search);
+    window.topRealmRead = function () {
+      try {
+        var f = document.getElementById('frame');
+        var doc = f && f.contentDocument;
+        if (!doc) return 'no frame document';
+        return Object.getOwnPropertyDescriptor(Document.prototype, 'cookie').get.call(doc);
+      } catch (e) {
+        return 'threw ' + e.name;
+      }
+    };
+    window.jsGet = function () { return document.cookie; };
+    window.jsSet = function (line) { document.cookie = line; return document.cookie; };
+    window.cookieStores = function () {
+      var out = { top: [typeof window.cookieStore, typeof window.CookieStore, typeof window.CookieStoreManager] };
+      try {
+        var f = document.createElement('iframe');
+        document.body.appendChild(f);
+        var w = window[window.length - 1];
+        out.blank = [typeof w.cookieStore, typeof w.CookieStore, typeof w.CookieStoreManager];
+      } catch (e) {
+        out.blank = 'threw ' + e.name;
+      }
+      return out;
+    };
+    if (q.get('frame')) {
+      var fr = document.createElement('iframe');
+      fr.id = 'frame';
+      fr.src = q.get('frame');
+      document.body.appendChild(fr);
+    }
+    if (q.get('img')) {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.src = q.get('img');
+      document.body.appendChild(img);
+    }
+    if (q.get('to')) document.getElementById('link').href = q.get('to');
+    document.getElementById('out').textContent = JSON.stringify({ host: location.host, cookie: document.cookie });
+  })();
+</script>
+</body>
+</html>

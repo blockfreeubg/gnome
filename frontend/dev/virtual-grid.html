@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  VirtualGrid benchmark — development and QA only (served by `npm run dev` at /dev/virtual-grid.html). 10,000 cards in
+  a page-style scroller (scroller="parent", like a catalog page). scripts/visual-qa.mjs scrolls it and measures frames.
+  Query: ?count=10000 · ?theme=dark|light.
+-->
+<html lang="en" class="theme-dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>VirtualGrid benchmark · GNOME dev</title>
+    <link rel="icon" href="/brand/favicon.ico" sizes="any" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./gallery.ts"></script>
+  </body>
+</html>

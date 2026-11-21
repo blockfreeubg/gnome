@@ -1,0 +1,114 @@
+<!doctype html><meta charset="utf-8"><title>a1</title>
+<!-- Row A1 r1-realm-walk (docs/WAVE-B3.md §4.7): step 2's realm walk (host-lib.mjs /realm-walk), extended to step 3's
+     additions (the UV document point __uvHook, the Scramjet client's WebSocket method, the UV realm hardening:
+     frameElement, History pushState/replaceState) and a stack sweep: every function GNOME installs is called once
+     normally and once around the stack limit (a recursion sweep over 40 paddings); none may hand the page an
+     engine-host constructor (value, getter, setter, thrown error, argument array); and the option dictionaries GNOME
+     hands the browser after page code ran hold nothing of the engine host either. -->
+<form id="f" action="/echo" method="get"><input name="q" value="x"></form>
+<pre id="out">pending</pre>
+<script>
+(() => {
+  const FP = Object.getPrototypeOf(function () {});
+  const out = { checked: 0, host: [], errors: {}, sweep: { calls: 0, page: 0, host: 0, hostIn: [] } };
+  const globalOf = (F) => {
+    for (let i = 0; i < 4 && typeof F === 'function' && F.constructor !== F; i++) F = F.constructor;
+    try { return typeof F === 'function' ? F('return this')() : null; } catch (e) { return null; }
+  };
+  const isHost = (v) => {
+    if ((typeof v !== 'object' && typeof v !== 'function') || v === null) return false;
+    try {
+      let F = typeof v === 'function' ? v : v.constructor;
+      for (let i = 0; i < 10 && typeof F === 'function'; i++) { const p = Object.getPrototypeOf(F); if (p === FP) return false; F = p; }
+    } catch (e) { return false; }
+    let g = null;
+    try { g = globalOf(typeof v === 'function' ? v : v.constructor); } catch (e) { return false; }
+    try { return !!(g && g !== window && g.__gnomeEngineHost); } catch (e) { return false; }
+  };
+  const installed = [];
+  const check = (label, v) => { if (typeof v !== 'function') return; out.checked++; if (isHost(v)) out.host.push(label); };
+  const walk = (label, obj, keep) => {
+    if (!obj) return;
+    let keys = [];
+    try { keys = Reflect.ownKeys(obj); } catch (e) { return; }
+    for (const k of keys) {
+      let d;
+      try { d = Object.getOwnPropertyDescriptor(obj, k); } catch (e) { continue; }
+      if (!d) continue;
+      const name = label + '.' + String(k);
+      check(name, d.value); check(name + ':get', d.get); check(name + ':set', d.set);
+      if (keep && keep.includes(String(k))) for (const [n, fn] of [[name, d.value], [name + ':get', d.get]]) if (typeof fn === 'function') installed.push([n, fn, obj]);
+    }
+  };
+  const protos = ['Window', 'Document', 'HTMLDocument', 'Node', 'Element', 'HTMLElement', 'HTMLIFrameElement', 'HTMLFrameElement',
+    'HTMLObjectElement', 'HTMLEmbedElement', 'HTMLFormElement', 'HTMLAnchorElement', 'DocumentFragment', 'ShadowRoot', 'Range',
+    'Attr', 'NamedNodeMap', 'History', 'EventTarget', 'Navigator', 'Function', 'Object', 'Array', 'Promise', 'Error', 'DOMException'];
+  walk('window', window, ['open', 'close', 'frameElement', '__uvHook']);
+  walk('document', document); walk('navigator', navigator); walk('history', history);
+  for (const p of protos) {
+    const C = window[p];
+    if (C) { walk(p, C); walk(p + '.prototype', C.prototype, ['submit', 'pushState', 'replaceState', 'appendChild', 'contentWindow', 'contentDocument', 'cookie', 'referrer', 'innerHTML']); }
+  }
+  const U = window.Ultraviolet;
+  if (U && U.BareClient) walk('Ultraviolet.BareClient.prototype', U.BareClient.prototype, ['createWebSocket']);
+  const sj = window[Symbol.for('scramjet client global')];
+  try { if (sj && sj.bare) walk('scramjet.bare.prototype', Object.getPrototypeOf(sj.bare), ['createWebSocket']); } catch (e) { out.errors.sj = String(e && e.name); }
+  // The stack sweep: each installed function, once normally and around the stack limit.
+  const recordErr = (name, e) => {
+    if (isHost(e)) { out.sweep.host++; if (out.sweep.hostIn.length < 20) out.sweep.hostIn.push(name); } else out.sweep.page++;
+  };
+  const receiverFor = (self, name) => {
+    if (name.includes('submit')) return {}; // never the real form (it would navigate): a page-realm TypeError
+    if (self === window) return window;
+    if (self === Document.prototype || self === HTMLDocument.prototype) return document;
+    if (self === History.prototype) return history;
+    if (self === Node.prototype || self === Element.prototype || self === HTMLElement.prototype) return document.createElement('div');
+    if (self === HTMLIFrameElement.prototype || self === HTMLFrameElement.prototype || self === HTMLObjectElement.prototype) return {};
+    return self;
+  };
+  // Each function once normally and once at 40 depths just below the recursion limit (step 2's realm.test.ts sweep,
+  // in the browser): an overflow inside GNOME's step must reach the page as a page-realm error.
+  let last = 0;
+  const descend = (d, target, call, errs) => {
+    last = d;
+    if (d < target) return descend(d + 1, target, call, errs);
+    try { call(); } catch (e) { errs.push(e); }
+    return d;
+  };
+  try { descend(0, Infinity, () => {}, []); } catch (e) { /* the limit */ }
+  const limit = last;
+  out.limit = limit;
+  for (const [name, fn, self] of installed) {
+    if (/\.close$/.test(name)) continue; // GNOME's close asks the app to close the tab
+    const args = name.includes('createWebSocket') ? ['ws://127.0.0.1:9/gnome-a1', [], []] : name.includes('State') ? [null, ''] : [];
+    const call = () => Reflect.apply(fn, receiverFor(self, name), args);
+    try { const r = call(); out.sweep.calls++; if (isHost(r)) { out.sweep.host++; out.sweep.hostIn.push(name + ' (result)'); } } catch (e) { out.sweep.calls++; recordErr(name, e); }
+    for (let k = 0; k < 40; k++) {
+      const errs = [];
+      try { descend(0, Math.max(0, limit - 1 - k), call, errs); } catch (e) { errs.push(e); }
+      out.sweep.calls++;
+      for (const e of errs) recordErr(name + '@limit', e);
+    }
+  }
+  out.installed = installed.map(([n]) => n);
+  out.host = out.host.slice(0, 40);
+  // GNOME's option dictionaries (rule 1): the browser converts a dictionary member by member, inherited members too, so a
+  // page getter on Object.prototype for a member GNOME's options leave out runs with those options as `this`; none of
+  // their values may be the engine host's. A shadow root makes the child-frame guard observe it after page code ran
+  // (webrtc.ts observeRoot → kit.observe); lane x2's review found the attributeFilter array there (row cs-late R1).
+  const dict = { seen: 0, host: [] };
+  const absent = ['attributeOldValue', 'characterData', 'characterDataOldValue'];
+  const members = ['attributeFilter', 'attributeOldValue', 'attributes', 'characterData', 'characterDataOldValue', 'childList', 'subtree'];
+  for (const k of absent) {
+    Object.defineProperty(Object.prototype, k, { configurable: true, get() {
+      dict.seen++;
+      try { for (const m of members) { const d = Object.getOwnPropertyDescriptor(this, m); if (d && 'value' in d && isHost(d.value)) dict.host.push(k + ':' + m); } } catch (e) { /* not an object */ }
+      return undefined;
+    } });
+  }
+  try { const holder = document.createElement('div'); document.body.appendChild(holder); holder.attachShadow({ mode: 'open' }); } catch (e) { out.errors.shadow = String(e && e.name); }
+  for (const k of absent) delete Object.prototype[k];
+  out.dict = dict;
+  document.getElementById('out').textContent = JSON.stringify(out);
+})();
+</script>

@@ -1,0 +1,98 @@
+<!doctype html><meta charset="utf-8"><title>cs-late</title>
+<pre id="out"></pre>
+<script>
+  window.addEventListener('error', (e) => { document.getElementById('out').textContent = JSON.stringify({ error: String(e.message), at: e.lineno }); });
+</script>
+<script>
+  // Lane review (WAVE-B3 §5.1 "late styles", rule R1), suite row cs-late: the suite opens this page while the filter
+  // engines are not ready (it holds the build), so GNOME gives the page its styles and its generic-rule monitor only
+  // when they become ready, after this page's own code ran. The page records the realm of everything GNOME's late
+  // steps hand it:
+  //  - getters on its Object.prototype for the members of MutationObserverInit that an options object leaves out: the
+  //    browser reads a dictionary member by member, inherited members too, with the options object as `this`, so a
+  //    getter sees every value of the options GNOME's observer was given;
+  //  - recording Proxies on the natives row CS18 replaces (and Document.prototype.querySelectorAll: the late path
+  //    scans the document first).
+  // A document reached late gets no scriptlets (WAVE-B3 §5.1): gnomeCsLate (set-constant, cosmetic.txt) stays unset.
+  // A realm is told by the end of an object's prototype chain (each realm has its own Object.prototype).
+  const getProto = Reflect.getPrototypeOf;
+  const ownKeys = Reflect.ownKeys;
+  const ownDesc = Reflect.getOwnPropertyDescriptor;
+  const OWN_ROOT = getProto({});
+  const foreign = [];
+  const calls = { dictionary: 0, getAttribute: 0, querySelectorAll: 0, docQuerySelectorAll: 0, iterator: 0, push: 0, item: 0 };
+  const realmOf = (v) => {
+    if ((typeof v !== 'object' && typeof v !== 'function') || v === null) return 'primitive';
+    try {
+      let p = getProto(v);
+      if (p === null) return 'none';
+      for (let i = 0; i < 32; i++) {
+        const q = getProto(p);
+        if (q === null) return p === OWN_ROOT ? 'page' : 'foreign';
+        p = q;
+      }
+      return 'deep';
+    } catch (e) { return 'unreadable'; }
+  };
+  // Re-entrancy guard: the engine's own hooks (and the traps' own reads) may reach the replaced members again.
+  let busy = false;
+  const note = (where, v) => {
+    if (realmOf(v) === 'foreign' && foreign.length < 50) foreign.push(where);
+  };
+  for (const key of ['attributeOldValue', 'characterData', 'characterDataOldValue']) {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true,
+      get() {
+        if (!busy) {
+          busy = true;
+          try {
+            calls.dictionary++;
+            note(`${key}:this`, this);
+            for (const k of ownKeys(this)) {
+              const d = ownDesc(this, k);
+              if (d && 'value' in d) note(`${key}:${String(k)}`, d.value);
+            }
+          } catch (e) {
+            foreign.push(`${key}:unreadable`);
+          } finally {
+            busy = false;
+          }
+        }
+        return undefined;
+      },
+    });
+  }
+  const record = (name) => ({
+    apply(target, self, args) {
+      if (!busy) {
+        busy = true;
+        try {
+          calls[name]++;
+          note(`${name}:this`, self);
+          note(`${name}:arguments`, args);
+          for (let i = 0; i < args.length; i++) note(`${name}:arg${i}`, args[i]);
+        } finally {
+          busy = false;
+        }
+      }
+      return Reflect.apply(target, self, args);
+    },
+  });
+  Element.prototype.getAttribute = new Proxy(Element.prototype.getAttribute, record('getAttribute'));
+  Element.prototype.querySelectorAll = new Proxy(Element.prototype.querySelectorAll, record('querySelectorAll'));
+  Document.prototype.querySelectorAll = new Proxy(Document.prototype.querySelectorAll, record('docQuerySelectorAll'));
+  NodeList.prototype[Symbol.iterator] = new Proxy(NodeList.prototype[Symbol.iterator], record('iterator'));
+  NodeList.prototype.item = new Proxy(NodeList.prototype.item, record('item'));
+  Array.prototype.push = new Proxy(Array.prototype.push, record('push'));
+  const scriptletAtStart = window.gnomeCsLate === 7;
+  const out = document.getElementById('out');
+  // The suite cannot tell this page when GNOME's late steps ran: the state is written every 100 ms.
+  const report = () => {
+    const sheets = Array.prototype.map.call(document.adoptedStyleSheets || [], (s) => realmOf(s));
+    out.textContent = JSON.stringify({ ready: true, foreign, calls, scriptlet: scriptletAtStart || window.gnomeCsLate === 7, sheets });
+  };
+  report();
+  setInterval(report, 100);
+</script>
+<div class="gnome-cslate-ad">a site-specific rule's target</div>
+<div class="gnome-cslate-gen">a generic rule's target (found by the monitor's first scan)</div>

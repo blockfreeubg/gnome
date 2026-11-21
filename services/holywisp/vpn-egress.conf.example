@@ -1,0 +1,65 @@
+# HolyWisp egress instance for one GNOME VPN exit location ("server VPN egress", docs/ARCHITECTURE.md
+# §7, docs/research/mullvad-vpn.md §5). This is an OVERLAY on top of gnome.conf:
+#
+#   holywisp --config /etc/holywisp/holywisp.conf --config /etc/holywisp/egress/<id>.conf
+#
+# which is exactly what holywisp@<id>.service runs. Scalar keys here override gnome.conf; list keys
+# (block-port, trusted-proxy) add to it. So the hardened policy is inherited unchanged and not
+# repeated here: private/loopback/link-local destinations refused (that also keeps users away from
+# the tunnel's own 10.64.0.0/10 addresses, gluetun's control API on 127.0.0.1:8000 and the LAN), the
+# Fetch bad ports blocked (no SMTP/IRC through the operator's VPN account), UDP, Twisp and
+# reputation off, X-Forwarded-For as the only trusted header.
+#
+# Setup, per offered location <id> (e.g. se-sto):
+#   1. A VPN tunnel on this host through which <relay ip> and <dns ip> are reachable: kernel
+#      WireGuard in a network namespace, gluetun, or wireproxy (mullvad-vpn.md §5.2-5.8).
+#   2. cp vpn-egress.conf.example /etc/holywisp/egress/<id>.conf and replace every <...>, then run
+#      check-egress.sh on it. holywisp@<id>.service runs that check before every start: HolyWisp
+#      itself starts with a malformed dns-server (see below).
+#   3. systemctl enable --now holywisp@<id>.service, and give the unit a drop-in that lets it reach
+#      the tunnel addresses (README.md "VPN egress instances"; it is fail-closed without one).
+#   4. List the instance in GNOME_VPN_PROFILES: wisp_upstream = "127.0.0.1:<port>" (services/vpn/).
+# Mullvad: use the operator's own account for the operator's household only (its terms forbid
+# providing VPN service to others). GNOME is not affiliated with or endorsed by Mullvad VPN AB.
+
+# --------------------------------------------------------------------------------------- listening
+host = 127.0.0.1                 # where the gateway connects. Network namespace: the namespace's end
+                                 # of the veth pair (e.g. 169.254.64.2). Inside gluetun's netns: 0.0.0.0
+                                 # (gluetun's firewall blocks VPN-side input by default).
+port = <port>                    # unique per instance: 6002, 6003, ... never 6001 (the direct
+                                 # instance). Under systemd every instance has its own dynamic UID, so
+                                 # a clash fails to bind instead of silently sharing (SO_REUSEPORT).
+workers = 2                      # an exit location rarely needs more (Pi 4: 1-2)
+max-concurrent-connections = 2000
+
+# -------------------------------------------------------------------------------- where streams go
+proxy = socks5://<relay ip>:1080 # the location's SOCKS5 proxy, reachable only through the tunnel. Use an
+                                 # IP literal: a hostname is resolved once at startup through the host
+                                 # resolver. Mullvad: the location's 10.124.x.y from the
+                                 # /network/v1-beta1/socks-proxies list, or 10.64.0.1 for the connected
+                                 # relay's own exit. One proxy per process, TCP only, no fallback to
+                                 # direct: a dead proxy fails streams, it never leaks them.
+proxy-udp = refuse               # with a proxy, UDP could only leave from the tunnel relay, not from the
+                                 # chosen location (and allow-udp is off in gnome.conf)
+dns-server = <dns ip>            # a resolver reached THROUGH the tunnel (Mullvad: 10.64.0.1). HolyWisp
+                                 # resolves every destination itself for its egress check before it
+                                 # dials the proxy; without this line the host's resolver and its
+                                 # upstream would see every hostname users visit (a DNS leak). The
+                                 # proxy is then handed the hostname (SOCKS5 ATYP 3) and the exit
+                                 # relay resolves it again. Forms: 10.64.0.1, 10.64.0.1:53,
+                                 # [fd00::1]:53. HolyWisp only logs a malformed entry (a bare IPv6
+                                 # address is one) and, with no valid entry, falls back to the host
+                                 # resolver; check-egress.sh refuses that. This DNS client does not
+                                 # read /etc/hosts.
+dns-timeout-ms = 3000
+
+# ------------------------------------------------------------------------------- who the client is
+trusted-proxy = <gateway ip>     # the address the GNOME gateway connects FROM, as a /32: 127.0.0.1/32
+                                 # on the same host (gnome.conf already trusts it), the gateway end of
+                                 # the veth pair (169.254.64.1/32), or the gateway container's IP.
+                                 # Never 10.0.0.0/8: it overlaps Mullvad's 10.64.0.0/10.
+
+# Stricter option: gnome.conf allows public IP literals (allow-direct-ip = on; the address-class
+# checks above still apply to them). mullvad-vpn.md §5.4 suggests refusing all literals on egress
+# instances; uncomment to do so (sites addressed by a bare IP then fail on this location only).
+# allow-direct-ip = off

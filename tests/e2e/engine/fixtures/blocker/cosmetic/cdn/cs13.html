@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>cs13</title>
+<p id="t1">gnome-cs13-original</p>
+<p id="t2">gnome-cs13-second</p>
+<p id="t3">gnome-cs13-trusted-original</p>
+<pre id="out"></pre>
+<script>
+  window.addEventListener('load', () => {
+    document.getElementById('out').textContent = JSON.stringify({
+      cookie: document.cookie,
+      trustedLs: localStorage.getItem('gnome_cs13_trusted_ls'),
+      untrustedLs: localStorage.getItem('gnome_cs13_untrusted_ls'),
+      t1: document.getElementById('t1').textContent,
+      t2: document.getElementById('t2').textContent,
+      t3: document.getElementById('t3').textContent,
+    });
+  });
+</script>

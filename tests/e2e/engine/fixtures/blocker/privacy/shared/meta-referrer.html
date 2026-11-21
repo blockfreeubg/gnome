@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>meta referrer {{host}}</title>
+</head>
+<body>
+<pre id="out">pending</pre>
+<!-- Row P6 (lane x3): a page whose policy comes from <meta name="referrer" content="no-referrer"> instead of a header.
+     The parser-made image and frame below and the link name their targets in the HTML (static ids, the row filters
+     by time); ?img=<url> adds a script-made image too. -->
+<img id="img" alt="" src="{{origin:site-b}}/beacon?id=p6meta-parser">
+<iframe id="frame" src="{{origin:site-b}}/echo?format=html&amp;via=p6meta-frame"></iframe>
+<a id="link" href="{{origin:site-b}}/policy?referrer=unsafe-url&amp;via=p6meta-link">next</a>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get('img')) {
+      var i = document.createElement('img');
+      i.alt = '';
+      i.src = q.get('img');
+      document.body.appendChild(i);
+    }
+    document.getElementById('out').textContent = JSON.stringify({ referrer: document.referrer, url: location.href });
+  })();
+</script>
+</body>
+</html>

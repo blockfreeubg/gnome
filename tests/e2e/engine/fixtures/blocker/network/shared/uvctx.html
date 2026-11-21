@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><title>uvctx {{host}}</title>
+<!-- Rows V5–V9 (docs/WAVE-B3.md §12.2): requests whose page context the service worker must not lose or let the page
+     choose. Each probe loads {{origin:ads}}/network/ad.js (or fetches /echo) in a context; the third-party rule must
+     block it everywhere. ?p=v5,v7,v8,v9 -->
+<pre id="out">pending</pre>
+<script>
+(async () => {
+  const out = {};
+  const q = new URLSearchParams(location.search);
+  const p = (q.get('p') || '').split(',');
+  const AD = '{{origin:ads}}/network/ad.js';
+  const frameOut = (f, timeout = 8000) => new Promise((resolve) => {
+    const t0 = Date.now();
+    const tick = () => {
+      let v = null;
+      try { v = f.contentDocument && f.contentDocument.getElementById('out') ? f.contentDocument.getElementById('out').textContent : null; } catch (e) { v = 'unreadable'; }
+      if (v && v !== '' && v !== 'pending') return resolve(v);
+      if (Date.now() - t0 > timeout) return resolve(v);
+      setTimeout(tick, 100);
+    };
+    tick();
+  });
+  if (p.includes('v5')) {
+    const f = document.createElement('iframe');
+    f.referrerPolicy = 'no-referrer';
+    f.src = '{{origin:site-b}}/network/inner.html';
+    document.body.appendChild(f);
+    out.v5 = await frameOut(f);
+  }
+  if (p.includes('v7')) {
+    for (const kind of ['blank', 'srcdoc']) {
+      const f = document.createElement('iframe');
+      if (kind === 'srcdoc') f.srcdoc = '<pre id="out"></pre><script src="' + AD + '" onload="document.getElementById(\'out\').textContent=\'load\'" onerror="document.getElementById(\'out\').textContent=\'error\'"><\/script>';
+      document.body.appendChild(f);
+      if (kind === 'blank') {
+        const d = f.contentDocument;
+        d.body.innerHTML = '<pre id="out"></pre>';
+        const s = d.createElement('script');
+        s.src = AD;
+        s.onload = () => (d.getElementById('out').textContent = 'load');
+        s.onerror = () => (d.getElementById('out').textContent = 'error');
+        d.body.appendChild(s);
+      }
+      out['v7' + kind] = await frameOut(f);
+    }
+  }
+  if (p.includes('v8')) {
+    out.v8 = await new Promise((resolve) => {
+      try {
+        const src = 'fetch("' + AD + '").then((r) => postMessage("status:" + r.status), (e) => postMessage("error:" + e.name));';
+        const w = new Worker('{{origin:site-a}}/network/worker.js');
+        w.onmessage = (e) => resolve(String(e.data));
+        w.onerror = () => resolve('worker error');
+        setTimeout(() => resolve('timeout'), 8000);
+        void src;
+      } catch (e) { resolve('threw:' + e.name); }
+    });
+    out.v8shared = await new Promise((resolve) => {
+      try {
+        const w = new SharedWorker('{{origin:site-a}}/network/worker.js');
+        w.port.onmessage = (e) => resolve(String(e.data));
+        w.onerror = () => resolve('refused');
+        setTimeout(() => resolve('timeout'), 6000);
+      } catch (e) { resolve('threw:' + e.name); }
+    });
+  }
+  if (p.includes('v9')) {
+    out.v9 = await fetch('{{origin:ads}}/echo', { referrer: '{{origin:ads}}/network/page.html' }).then((r) => r.status, (e) => 'error:' + e.name);
+  }
+  document.getElementById('out').textContent = JSON.stringify(out);
+})();
+</script>

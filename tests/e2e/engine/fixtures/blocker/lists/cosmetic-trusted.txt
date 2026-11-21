@@ -1,0 +1,28 @@
+! gnome-e2e: id=e2e-cosmetic-trusted category=ads trusted=true default=true name=GNOME e2e cosmetic (trusted)
+! Lane x2's rows CS13 and CS15 (docs/WAVE-B3.md §12.2): a list the server marks trusted, so the sanitizer keeps its
+! scriptlets that need trust and its scriptlet lines with backticks or `$` in their arguments. GNOME assembles every
+! call itself with the arguments as one JSON array (WAVE-B3 D11, §11.4): none of the vectors below may run code
+! (the page's PWNED marker stays unset), and the values arrive as the strings the library parsed.
+!
+! CS13 a scriptlet that needs trust runs from a trusted list
+cdn.localhost##+js(trusted-set-cookie, gnome_cs13_trusted, yes)
+cdn.localhost##+js(trusted-set-local-storage-item, gnome_cs13_trusted_ls, $now$)
+cdn.localhost##+js(rpnt, #text, gnome-cs13-trusted-original, gnome-cs13-trusted-replaced)
+!
+! CS15 the argument vectors of WAVE-B3 §11.4 (set-constant ignores values it does not know: only PWNED matters here)
+site-b.localhost##+js(set-constant, gnomeCs15a, x`-Function`globalThis.PWNED=1```-`)
+site-b.localhost##+js(set-constant, a`\,Function`globalThis.PWNED=2```\,`)
+site-b.localhost##+js(set-constant, $', \,PWNED=6\,0, \,0)
+site-b.localhost##+js(set-constant, gnomeCs15b, $`)
+site-b.localhost##+js(set-constant, gnomeCs15c, $&)
+site-b.localhost##+js(set-constant, gnomeCs15d, `a\`globalThis.PWNED=3\``)
+site-b.localhost##+js(set-constant, gnomeCs15e, a\`Function`globalThis.PWNED=4``)
+! ... and the same characters as data: trusted-set-constant stores a json: value, so the page reads back exactly what
+! the library parsed (after decodeURIComponent, as the library intends; %2C is a comma)
+site-b.localhost##+js(trusted-set-constant, gnomeCs15v1, json:"x`-Function`globalThis.PWNED=1```-")
+site-b.localhost##+js(trusted-set-constant, gnomeCs15v2, json:"$' $` $& ${PWNED=5}")
+site-b.localhost##+js(trusted-set-constant, gnomeCs15v3, `json:"a\`b"`)
+site-b.localhost##+js(trusted-set-constant, gnomeCs15v5, json:"x\\`y")
+site-b.localhost##+js(trusted-set-constant, gnomeCs15v4, json:"one\, two%2C three")
+! a regex argument arrives unchanged (the window closes only when the regex matched the page's own URL)
+site-b.localhost##+js(window-close-if, /\/cosmetic\/cs15-close\.html$/)

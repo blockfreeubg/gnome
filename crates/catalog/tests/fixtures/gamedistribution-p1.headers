@@ -1,0 +1,17 @@
+HTTP/2 200 
+date: Tue, 10 Nov 2026 20:22:36 GMT
+content-type: application/json; charset=utf-8
+content-length: 14224
+access-control-allow-origin: *
+content-security-policy: default-src 'self';base-uri 'self';block-all-mixed-content;font-src 'self' https: data:;frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests
+x-dns-prefetch-control: off
+expect-ct: max-age=0
+x-frame-options: SAMEORIGIN
+strict-transport-security: max-age=15552000; includeSubDomains
+x-download-options: noopen
+x-content-type-options: nosniff
+x-permitted-cross-domain-policies: none
+referrer-policy: no-referrer
+x-xss-protection: 0
+etag: W/"3790-uh5RA/LCmaLPy5IOyTIc1a5Dv9I"
+

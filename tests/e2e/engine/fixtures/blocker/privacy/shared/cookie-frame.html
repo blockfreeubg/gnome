@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>cookie frame {{host}}</title></head>
+<body>
+<pre id="out">pending</pre>
+<script>
+  // Rows K1-K10 (docs/WAVE-B3.md §12.2): JavaScript cookies of the document (`document.cookie`, and the same through
+  // the prototype's descriptor, which GNOME's wrapper must decide by the document it is called on). `?js=<name>` writes
+  // `<name>=1` at load.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var d = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+    window.jsSet = function (line) { document.cookie = line; return document.cookie; };
+    window.jsGet = function () { return document.cookie; };
+    window.viaDescriptor = function () { return d && d.get ? d.get.call(document) : null; };
+    window.viaDescriptorFake = function () { try { return d.get.call(Object.create(Document.prototype)); } catch (e) { return 'threw ' + e.name; } };
+    window.descriptorSet = function (line) { d.set.call(document, line); return document.cookie; };
+    // The frame's own realm's accessor called on an attached first-party document (the tab's top page): both engines
+    // read and write the cookies of the accessor's realm whatever `this` is, so GNOME must judge by the realm too.
+    window.viaDescriptorParent = function () { try { return d.get.call(parent.document); } catch (e) { return 'threw ' + e.name; } };
+    window.descriptorSetParent = function (line) { try { d.set.call(parent.document, line); } catch (e) { return 'threw ' + e.name; } return document.cookie; };
+    // Ultraviolet injects the document's script-visible cookies as a page global (uv.sw.js createHtmlInject).
+    window.uvCookiesGlobal = function () { return typeof self.__uv$cookies === 'string' ? self.__uv$cookies : null; };
+    // An about:blank child this frame creates: a realm GNOME never attaches (measured, row K3c).
+    window.blankChild = function () {
+      var out = {};
+      var read = function (f) { try { var v = f(); return typeof v === 'string' ? v : 'not a string: ' + typeof v; } catch (e) { return 'threw ' + e.name; } };
+      try {
+        var f = document.createElement('iframe');
+        document.body.appendChild(f);
+        var w = window[window.length - 1];
+        out.contentDocument = read(function () { return f.contentDocument.cookie; });
+        out.indexed = read(function () { return w.document.cookie; });
+        out.borrowed = read(function () { return Object.getOwnPropertyDescriptor(w.Document.prototype, 'cookie').get.call(w.document); });
+        out.borrowedOnFrame = read(function () { return Object.getOwnPropertyDescriptor(w.Document.prototype, 'cookie').get.call(document); });
+      } catch (e) {
+        out.error = String(e);
+      }
+      return out;
+    };
+    window.fetchCookies = function (u) {
+      return fetch(u, { credentials: 'include' }).then(function (r) { return r.json(); }).catch(function (e) { return { error: String(e) }; });
+    };
+    if (q.get('js')) document.cookie = q.get('js') + '=1; Path=/';
+    document.getElementById('out').textContent = JSON.stringify({ host: location.host, cookie: document.cookie });
+  })();
+</script>
+</body>
+</html>

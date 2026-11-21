@@ -1,0 +1,5 @@
+! gnome-e2e: id=e2e-privacy category=urlparams trusted=false default=true name=GNOME e2e tracking parameters
+! Lane x3's row P7 (docs/WAVE-B3.md §12.2): a URL-parameter list whose $removeparam filter removes a parameter
+! GNOME's built-in table does not know, so the row tells the list's part (the params group's rewriteParams, D1/D13)
+! from the built-in table's (utm_*, fbclid, ...). Test data written for GNOME's e2e tests (CC0-1.0).
+$removeparam=gnome_e2e

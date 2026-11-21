@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>cs3</title>
+<div id="late">gets the class gnome-cs3-late after load</div>
+<div id="later">gets the id gnome-cs3-id after load</div>
+<div id="box"></div>
+<pre id="out"></pre>
+<script>
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      document.getElementById('late').className = 'x gnome-cs3-late';
+      document.getElementById('later').id = 'gnome-cs3-id';
+      const d = document.createElement('section');
+      d.innerHTML = '<p><span class="gnome-cs3-added" id="added">added after load</span></p>';
+      document.getElementById('box').appendChild(d);
+      document.getElementById('out').textContent = JSON.stringify({ ready: true });
+    }, 300);
+  });
+</script>

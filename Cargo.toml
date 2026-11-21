@@ -1,0 +1,82 @@
+[workspace]
+resolver = "3"
+members = ["backend", "crates/net", "crates/catalog"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+rust-version = "1.89"
+repository = ""
+
+# Shared dependency versions. Features are kept lean (Raspberry Pi 4 target, no OpenSSL); member crates opt into
+# extra features locally.
+[workspace.dependencies]
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
+base64 = "0.23.1"
+# Precompressed filter lists (encoder; the same crate reqwest's brotli decoding already pulls in).
+brotli = { version = "9.1.1", default-features = false, features = ["std"] }
+bytes = "1.12.1"
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+# gzip variants of precompressed filter lists (also reqwest's gzip decoder).
+flate2 = "1.1.11"
+getrandom = "0.4.3"
+hmac = "0.13.0"
+http = "1.5.0"
+http-body-util = "0.1.5"
+# Upstream (HolyWisp) response heads in the Wisp gateway; already used by hyper.
+httparse = "1.10.1"
+hyper = { version = "1.12.0", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+ipnet = "2.12.2"
+percent-encoding = "2.3.2"
+# gnome-net's outbound client: HTTP/1.1, no default TLS (rustls on ring + webpki roots is configured in gnome-net),
+# no system proxy, no cookies. Avoids OpenSSL and aws-lc entirely.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "gzip", "brotli"] }
+rpassword = "7.5.4"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+# Safe syscall wrappers (Linux only): the Wisp gateway's zero-copy splice(2) path (pipes), TCP keepalive (net) and
+# raising the RLIMIT_NOFILE soft limit at startup (process; no extra crates, only rustix's own syscall table).
+rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "pipe", "process"] }
+# `bundled` compiles SQLite with FTS5 + JSON1 enabled (needed by the catalog); no system libsqlite3 required.
+rusqlite = { version = "0.41.1", default-features = false, features = ["bundled", "cache"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["raw_value"] }
+# Already pulled in by axum's `json` feature; used directly for field paths in `validation_failed` errors.
+serde_path_to_error = "0.1.20"
+# Sec-WebSocket-Accept check in the Wisp upstream health probe (RFC 6455 mandates SHA-1 there).
+sha1 = { version = "0.11.0", default-features = false }
+sha2 = { version = "0.11.1", default-features = false }
+subtle = { version = "2.6.1", default-features = false, features = ["std"] }
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7.20", default-features = false, features = ["io", "rt"] }
+toml = { version = "1.2.1", default-features = false, features = ["parse", "serde", "std"] }
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["catch-panic"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "json", "std"] }
+url = "2.5.8"
+# Test-only (gateway tests, Wisp client example): WebSocket peers and TLS through Wisp streams.
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+webpki-roots = "1.0.12"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+debug = false
+incremental = false
+# The server keeps `panic = "unwind"` so a bug in one request/task is contained (tower catch-panic + tokio task
+# isolation) instead of aborting every live connection; the size difference is small.
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# Optimise dependencies in dev so argon2/sqlite/compression are not painfully slow in tests.
+opt-level = 2

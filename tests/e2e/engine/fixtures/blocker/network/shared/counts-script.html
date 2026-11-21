@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>counts (script) {{host}}</title>
+<!-- Row N13b: the four images of counts.html made by script after the page loaded (no parser preload). CC0-1.0. -->
+<pre id="out">pending</pre>
+<script>
+  addEventListener('load', () => {
+    const imgs = ['{{origin:ads}}', '{{origin:ads}}', '{{origin:ads}}', '{{origin:trk}}'].map((o, n) => {
+      const i = new Image();
+      i.src = o + '/beacon?id=n13b-s' + n;
+      document.body.appendChild(i);
+      return new Promise((r) => { i.onload = () => r('load'); i.onerror = () => r('error'); });
+    });
+    Promise.all(imgs).then((states) => { document.getElementById('out').textContent = JSON.stringify({ host: location.hostname, states }); });
+  });
+</script>

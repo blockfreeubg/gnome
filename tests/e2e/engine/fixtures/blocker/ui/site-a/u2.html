@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>GNOME e2e U2 site-a</title>
+<h1>site-a U2</h1>
+<p>Row U2 (the privacy protection, cookie manager and cosmetic filtering switches). The box below carries a class the
+e2e cosmetic list hides on site-a.localhost; the page reads its own Sec-GPC header from /echo; with <code>?c=name</code>
+it opens a site-b.localhost frame that sets the cookie <code>name</code> (third-party here). The result goes to
+<code>#out</code> and, as a first-party beacon, to the fixture server.</p>
+<div class="gnome-cs1-ad" id="u2ad">a box the cosmetic test list hides</div>
+<pre id="out"></pre>
+<script>
+  (function () {
+    var out = document.getElementById('out');
+    var c = new URLSearchParams(location.search).get('c');
+    var framed = c
+      ? new Promise(function (resolve) {
+          var f = document.createElement('iframe');
+          f.onload = function () { resolve(true); };
+          setTimeout(function () { resolve(false); }, 8000);
+          f.src = '{{origin:site-b}}/set-cookie?' + encodeURIComponent(c) + '=1';
+          document.body.appendChild(f);
+        })
+      : Promise.resolve(null);
+    var ac = new AbortController();
+    setTimeout(function () { ac.abort(); }, 8000);
+    var echo = fetch('/echo', { cache: 'no-store', signal: ac.signal }).then(function (r) { return r.json(); }).then(
+      function (e) { return e.headers['sec-gpc'] === undefined ? null : e.headers['sec-gpc']; },
+      function (err) { return 'error: ' + String(err).slice(0, 80); }
+    );
+    Promise.all([echo, framed]).then(function (r) {
+      var box = document.getElementById('u2ad');
+      var res = { gpc: navigator.globalPrivacyControl === true, secGpc: r[0], frameLoaded: r[1], boxDisplay: getComputedStyle(box).display };
+      out.textContent = JSON.stringify(res);
+      // The result also goes to the fixture server (first-party), where the suite reads it without a frame read.
+      new Image().src = '/beacon?id=u2-result&c=' + encodeURIComponent(c || '') + '&r=' + encodeURIComponent(JSON.stringify(res));
+    });
+  })();
+</script>

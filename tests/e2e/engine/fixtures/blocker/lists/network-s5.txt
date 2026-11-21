@@ -1,0 +1,4 @@
+! gnome-e2e: id=e2e-network-s5 category=security trusted=false default=false name=GNOME e2e network (row S5)
+! Lane x1's row S5 (docs/WAVE-B3.md §12.2): the list the suite rewrites on the server while the app's refs are stale.
+! Off by default and named by that row only, so rewriting it touches no other row. Test data (CC0-1.0).
+||s5.localhost^

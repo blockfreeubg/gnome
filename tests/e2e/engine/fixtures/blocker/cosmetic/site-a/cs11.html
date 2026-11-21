@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>cs11</title>
+<script>
+  // The page's first script: set-constant must already be in place.
+  const seen = window.gnomeCs11;
+  window.gnomeCs11 = 7;
+  window.gnomeCs11Result = { seen, afterWrite: window.gnomeCs11 };
+</script>
+<pre id="out"></pre>
+<script>document.getElementById('out').textContent = JSON.stringify(window.gnomeCs11Result);</script>

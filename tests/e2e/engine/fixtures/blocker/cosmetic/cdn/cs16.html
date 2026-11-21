@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>cs16</title>
+<pre id="out"></pre>
+<script>
+  window.addEventListener('load', () => {
+    let ls = null;
+    try { ls = localStorage.getItem('gnome_cs16_ls'); } catch (e) { ls = 'error:' + e.name; }
+    document.getElementById('out').textContent = JSON.stringify({ cookie: document.cookie, ls });
+  });
+</script>

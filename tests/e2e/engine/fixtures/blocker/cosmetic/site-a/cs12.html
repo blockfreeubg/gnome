@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>cs12</title>
+<pre id="out"></pre>
+<script>
+  const r = {};
+  try {
+    r.bait = window.gnomeCs12Bait;
+    r.aborted = false;
+  } catch (e) {
+    r.aborted = e instanceof ReferenceError;
+  }
+  fetch('cs12.json').then((x) => x.text()).then((t) => {
+    r.json = JSON.parse(t); // json-prune wraps JSON.parse
+    r.parsed = JSON.parse('{"gnomeCs12Ad":1,"keep":2}');
+    document.getElementById('out').textContent = JSON.stringify(r);
+  }, (e) => {
+    r.error = String(e);
+    document.getElementById('out').textContent = JSON.stringify(r);
+  });
+</script>

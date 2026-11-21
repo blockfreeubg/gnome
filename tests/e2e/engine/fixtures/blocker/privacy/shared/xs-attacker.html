@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>cross-site requests {{host}}</title></head>
+<body>
+<pre id="out">ready</pre>
+<!-- The SameSite rows (lane x3, the 2026-11-19 security finding): requests site-b makes to site-a. A browser sends
+     site-a's SameSite=None cookie with the image and the POST, the Lax one only with the top-level GET link, and the
+     Strict one with none of them. -->
+<img id="img" alt="" src="{{origin:site-a}}/cookies?via=img">
+<a id="link" href="{{origin:site-a}}/cookies?format=html&amp;via=link">to site-a</a>
+<form id="post" method="post" action="{{origin:site-a}}/echo?format=html&amp;via=post">
+  <input type="hidden" name="x" value="1">
+  <button id="go" type="submit">post to site-a</button>
+</form>
+<script>
+  window.fetchNoCors = function (u) { return fetch(u, { mode: 'no-cors', credentials: 'include' }).then(function () { return 'sent'; }, function (e) { return String(e); }); };
+</script>
+</body>
+</html>

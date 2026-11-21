@@ -1,0 +1,422 @@
+# GNOME curated open-source games (source = "oss").
+#
+# Only the repositories verified in docs/research/games-sources.md §8.2 are listed. Re-verified on 2026-11-10:
+# `commit` is the repository HEAD on that date (`git ls-remote`), `license_file` / `copyright` were read from that
+# commit on raw.githubusercontent.com, and `entry` was fetched at that commit together with every local script and
+# stylesheet it references (`build = "static"` means the checkout runs as-is, no build step).
+# `title` comes from the README heading, `description` from the README / GitHub repository description (markdown
+# link syntax removed). Categories are chosen by hand (research §6.1: "js13k / Y8 / OSS: chosen by hand").
+#
+# Entries with `enabled = false` cannot be self-hosted from a plain checkout (build step, server component,
+# analytics, or not a finished game); `notes` says why. The importer only lists enabled entries whose build exists
+# under $GNOME_OSS_GAMES_DIR/<slug>/<entry> (see README), and serves them from the proxy origin at
+# /oss/<slug>/<entry>. Show the licence, copyright line and repository link next to the game; ship the LICENSE
+# file with the build; for (A)GPL games also publish any modified source.
+
+[[games]]
+slug = "2048"
+title = "2048"
+repo = "https://github.com/gabrielecirulli/2048"
+commit = "478b6ec346e3787f589e4af751378d06ded4cbbc"
+license = "MIT"
+license_file = "LICENSE.txt"
+copyright = "Copyright (c) 2014 Gabriele Cirulli"
+author = "Gabriele Cirulli"
+entry = "index.html"
+build = "static"
+thumbnail = "meta/apple-touch-icon.png"
+categories = ["puzzle"]
+tags = ["numbers", "sliding"]
+description = "A small clone of 1024, based on Saming's 2048 (also a clone). 2048 was indirectly inspired by Threes."
+homepage = "https://play2048.co"
+enabled = true
+
+[[games]]
+slug = "hexgl"
+title = "HexGL"
+repo = "https://github.com/BKcore/HexGL"
+commit = "6addc95a2fce3bf05f4d751823cc054c61a16d68"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2015 Thibaut Despoulain"
+author = "Thibaut Despoulain"
+entry = "index.html"
+build = "static"
+categories = ["racing"]
+tags = ["webgl", "futuristic"]
+description = "Source code of HexGL, the futuristic HTML5 racing game by Thibaut Despoulain"
+homepage = "http://hexgl.bkcore.com"
+enabled = true
+notes = "index.html references its favicon on hexgl.bkcore.com"
+
+[[games]]
+slug = "particle-clicker"
+title = "Particle Clicker"
+repo = "https://github.com/particle-clicker/particle-clicker"
+commit = "d6762d54eced10cca613262072fe5b44d157aa38"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2014-2016 Igor Babuschkin, Kevin Dungs, Tadej Novak, Gabor Biro"
+author = "Igor Babuschkin, Kevin Dungs, Tadej Novak, Gabor Biro"
+entry = "index.html"
+build = "static"
+thumbnail = "assets/mobile/icon.png"
+categories = ["idle", "educational"]
+tags = ["physics", "science", "incremental"]
+description = "An addictive incremental game that teaches players the history of high energy particle physics."
+homepage = "https://particle-clicker.web.cern.ch"
+enabled = true
+notes = "loads jQuery, AngularJS and Bootstrap from public CDNs; analytics is disabled (empty Helpers.analytics id in js/helpers.js)"
+
+[[games]]
+slug = "javascript-racer"
+title = "Javascript Pseudo 3D Racer"
+repo = "https://github.com/jakesgordon/javascript-racer"
+commit = "3e8a060b5900755db27f899612a74a77427c853e"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2012, 2013, 2014, 2015, 2016 Jake Gordon and contributors"
+author = "Jake Gordon"
+entry = "v4.final.html"
+build = "static"
+categories = ["racing", "arcade"]
+tags = ["outrun", "pseudo-3d"]
+description = "An Outrun-style pseudo-3d racing game in HTML5 and Javascript"
+homepage = "https://jakesgordon.com/writing/javascript-racer/"
+enabled = true
+notes = "index.html is a menu of the four tutorial stages; v4.final.html is the complete game"
+
+[[games]]
+slug = "javascript-breakout"
+title = "Breakout"
+repo = "https://github.com/jakesgordon/javascript-breakout"
+commit = "eed59e2affa9423b93d2ac8ff93061bb88b33284"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2011, 2012, 2013, 2014, 2015, 2016 Jake Gordon and contributors"
+author = "Jake Gordon"
+entry = "index.html"
+build = "static"
+categories = ["arcade"]
+tags = ["breakout", "canvas"]
+description = "Another HTML5 experiment to implement BREAKOUT in a <canvas>"
+homepage = "https://jakesgordon.com/writing/javascript-breakout/"
+enabled = true
+notes = "LICENSE is the MIT text (GitHub reports NOASSERTION because of the copyright line format)"
+
+[[games]]
+slug = "bullethell"
+title = "bullethell"
+repo = "https://github.com/selenebun/bullethell"
+commit = "75173f8c37868ac7f30b886da6d28560e8e4418b"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2020 Amelia Clarke"
+author = "Amelia Clarke"
+entry = "index.html"
+build = "static"
+categories = ["arcade", "shooter"]
+tags = ["bullet-hell", "p5js"]
+description = "A bullet hell game in HTML5 and JS, using the p5.js library."
+instructions = "Arrow keys to move. Z to fire. X to slow down time."
+homepage = "https://selenebun.github.io/bullethell/"
+enabled = true
+
+[[games]]
+slug = "javascript-chess"
+title = "JavaScript Chess"
+repo = "https://github.com/kbjorklu/chess"
+commit = "61c19eaa8afbb54a73870c2be883023b06a455bc"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2013 Kaj Björklund"
+author = "Kaj Björklund"
+entry = "chess.html"
+build = "static"
+categories = ["strategy"]
+tags = ["chess", "board"]
+description = "This program is a JavaScript implementation of the board game Chess, with a computer player opponent. All move types are supported, including en passant, castling and promotion."
+homepage = "http://www.iki.fi/kbjorklu/chess/"
+enabled = true
+notes = "loads jQuery / jQuery UI from code.jquery.com and cdnjs.cloudflare.com"
+
+[[games]]
+slug = "a-blast"
+title = "A-Blast"
+repo = "https://github.com/aframevr/a-blast"
+commit = "1984d1adb7845399fabd8672909ce1c74ccd5cf7"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright © 2015-2016 A-Frame authors."
+author = "A-Frame authors"
+entry = "index.html"
+build = "static"
+thumbnail = "assets/images/icon-128.png"
+categories = ["action", "shooter"]
+tags = ["webxr", "vr", "a-frame"]
+description = "A WebVR FPS mini-game demo using A-Frame by Mozilla VR."
+instructions = "You can also play in desktop using the spacebar and the mouse, and on your mobile phone too (with or without Cardboard)."
+homepage = "https://aframe.io/a-blast/"
+enabled = true
+notes = "build/build.js is committed; also loads aframe.min.js from aframe.io"
+
+[[games]]
+slug = "a-dark-room"
+title = "A Dark Room"
+repo = "https://github.com/doublespeakgames/adarkroom"
+commit = "1fada4620b6c66bd07bf15a3f1eb8223df8bc1d7"
+license = "MPL-2.0"
+license_file = "LICENSE.md"
+author = "doublespeakgames"
+entry = "index.html"
+build = "static"
+thumbnail = "img/adr.png"
+categories = ["adventure", "idle"]
+tags = ["text-adventure", "minimalist"]
+description = "a minimalist text adventure game for your browser"
+homepage = "http://adarkroom.doublespeakgames.com"
+enabled = true
+notes = "tries jQuery from ajax.googleapis.com first, with the bundled lib/jquery.min.js as fallback"
+
+[[games]]
+slug = "hextris"
+title = "Hextris"
+repo = "https://github.com/Hextris/hextris"
+commit = "3f4847dc8fd7dab3d1c87e6324b9159d92fbd396"
+license = "GPL-3.0"
+license_file = "LICENSE.md"
+author = "Logan Engstrom, Garrett Finucane, Noah Moroze, Michael Yang"
+entry = "index.html"
+build = "static"
+thumbnail = "images/icons/apple-touch-180.png"
+categories = ["puzzle", "arcade"]
+tags = ["hexagon", "blocks"]
+description = "An addictive puzzle game inspired by Tetris."
+homepage = "https://hextris.io"
+enabled = true
+notes = "default branch gh-pages; copyleft: publish any modified source"
+
+[[games]]
+slug = "clumsy-bird"
+title = "Clumsy Bird"
+repo = "https://github.com/ellisonleao/clumsy-bird"
+commit = "fae3d487d5102af29fb3f78431cbd45e9b83aed3"
+license = "GPL-3.0"
+license_file = "LICENSE.md"
+author = "Ellison Leão"
+entry = "index.html"
+build = "static"
+thumbnail = "data/img/touch-icon-iphone-retina.png"
+categories = ["arcade", "casual"]
+tags = ["melonjs", "one-button"]
+description = "A MelonJS made \"Flappy Bird\" clone."
+homepage = "http://ellisonleao.github.io/clumsy-bird/"
+enabled = true
+notes = "build/clumsy-min.js is committed; Flappy-Bird-style: review trade dress (research §8.2); copyleft"
+
+# --- Verified licences, but not self-hostable from a plain checkout --------------------------------------------
+
+[[games]]
+slug = "sandspiel"
+title = "Sandspiel"
+repo = "https://github.com/MaxBittker/sandspiel"
+commit = "9936e06b07a583aedfba9589c0cead2917f405fb"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2018 Max Bittker"
+author = "Max Bittker"
+entry = "index.html"
+build = "required"
+categories = ["sandbox"]
+enabled = false
+notes = "index.html loads the app from a.sandspiel.club plus Google ads and analytics; styles.css is not committed (Rust/wasm build needed)"
+
+[[games]]
+slug = "cube-composer"
+title = "cube composer"
+repo = "https://github.com/sharkdp/cube-composer"
+commit = "83e5b66b05bd66b6ece56fd1b484f8cc73e136b1"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2015-2016 David Peter"
+author = "David Peter"
+entry = "index.html"
+build = "required"
+categories = ["puzzle"]
+enabled = false
+notes = "dist/main.js and dist/main.css are build outputs (PureScript), not committed"
+
+[[games]]
+slug = "antimatter-dimensions"
+title = "Antimatter Dimensions"
+repo = "https://github.com/IvarK/AntimatterDimensionsSourceCode"
+commit = "5409e320cecef96a917cca1dfb68f1f183e499ca"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2017 IvarK"
+author = "IvarK"
+entry = "index.html"
+build = "required"
+categories = ["idle"]
+enabled = false
+notes = "Vue CLI project: no index.html at the repository root, npm build required"
+
+[[games]]
+slug = "the-modding-tree"
+title = "The Modding Tree"
+repo = "https://github.com/Acamaeda/The-Modding-Tree"
+commit = "4d8a86cfb3c59ef3ef4c222f21ef4fbee980c621"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Modding Tree Copyright (c) 2020 Acamaeda"
+author = "Acamaeda"
+entry = "index.html"
+build = "static"
+categories = ["idle"]
+enabled = false
+notes = "a framework for making idle games; the default mod is a demo, not a finished game"
+
+[[games]]
+slug = "c4"
+title = "c4"
+repo = "https://github.com/kenrick95/c4"
+commit = "5f0b141806decad56a70f691413165091f7849a1"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) Kenrick"
+author = "Kenrick"
+entry = "index.html"
+build = "required"
+categories = ["strategy", "multiplayer"]
+enabled = false
+notes = "yarn workspace (browser/, core/, server/): bundler build required; online mode needs its server"
+
+[[games]]
+slug = "danoniplus"
+title = "danoniplus"
+repo = "https://github.com/cwtickle/danoniplus"
+commit = "ccf0913f9d3b7721db505006c0817ecad906bcd9"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2018 tickle"
+author = "tickle"
+entry = "index.html"
+build = "required"
+categories = ["music"]
+enabled = false
+notes = "rhythm-game engine: needs chart and music data; no index.html at the repository root"
+
+[[games]]
+slug = "littlejs"
+title = "LittleJS"
+repo = "https://github.com/KilledByAPixel/LittleJS"
+commit = "9712ac4cd76e8d5eb77da21004687b63f7856fc1"
+license = "MIT"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2021 Frank Force http://www.frankforce.com"
+author = "Frank Force"
+entry = "index.html"
+build = "static"
+categories = ["arcade"]
+enabled = false
+notes = "a game engine; its example games would each need their own entry"
+
+[[games]]
+slug = "baghchal"
+title = "Baghchal"
+repo = "https://github.com/sumn2u/baghchal"
+commit = "d56d73344a15ec66e44f90719fa58d62df49fe6a"
+license = "BSD-3-Clause"
+license_file = "LICENSE"
+copyright = "Copyright (c) 2023, Suman Kunwar"
+author = "Suman Kunwar"
+entry = "index.html"
+build = "required"
+categories = ["strategy"]
+enabled = false
+notes = "webpack build required (no index.html at the repository root)"
+
+[[games]]
+slug = "evolve"
+title = "Evolve"
+repo = "https://github.com/pmotschmann/Evolve"
+commit = "3436358dcd03d9f9e071d51ea071e0a78c0322e4"
+license = "MPL-2.0"
+license_file = "LICENSE"
+author = "pmotschmann"
+entry = "index.html"
+build = "static"
+categories = ["idle"]
+enabled = false
+notes = "index.html loads Google Analytics (gtag G-CPC46V71CB); remove it before self-hosting"
+
+[[games]]
+slug = "tessel"
+title = "Tessel"
+repo = "https://github.com/gvtulder/tessel"
+commit = "624985774bc0cd6661ab1ff64282e060bc4cdcb6"
+license = "GPL-3.0"
+license_file = "LICENSE.md"
+author = "gvtulder"
+entry = "index.html"
+build = "required"
+categories = ["puzzle"]
+enabled = false
+notes = "Parcel build required (no index.html at the repository root)"
+
+[[games]]
+slug = "caveexpress"
+title = "CaveExpress"
+repo = "https://github.com/mgerhardy/caveexpress"
+commit = "7769989b77b5e1640ebe1f684a043a15da85b4d4"
+license = "GPL-3.0-or-later"
+license_file = "LICENSE"
+copyright = "Copyright 2014-2016, Martin Gerhardy"
+author = "Martin Gerhardy"
+entry = "index.html"
+build = "required"
+categories = ["arcade"]
+enabled = false
+notes = "native C++ game; a web build is unverified"
+
+[[games]]
+slug = "ancient-beast"
+title = "Ancient Beast"
+repo = "https://github.com/FreezingMoon/AncientBeast"
+commit = "2dad015855a07e3d3f75bc15ba892846059c7853"
+license = "AGPL-3.0"
+license_file = "LICENSE.md"
+author = "FreezingMoon"
+entry = "index.html"
+build = "server"
+categories = ["strategy"]
+enabled = false
+notes = "needs its own server (AGPL obligations apply)"
+
+[[games]]
+slug = "browserquest"
+title = "BrowserQuest"
+repo = "https://github.com/mozilla/BrowserQuest"
+commit = "af32d247cac3495ca430d0effbb88dd5f3250b2c"
+license = "MPL-2.0"
+license_file = "LICENSE"
+author = "Mozilla"
+entry = "index.html"
+build = "server"
+categories = ["adventure", "multiplayer"]
+enabled = false
+notes = "needs a Node.js game server; content is CC-BY-SA 3.0 (separate from the MPL code)"
+
+[[games]]
+slug = "freeciv-web"
+title = "Freeciv-web"
+repo = "https://github.com/freeciv/freeciv-web"
+commit = "c19ce060fadc99663f8aba3652ca94b07174467c"
+license = "AGPL-3.0"
+license_file = "LICENSE.txt"
+author = "The Freeciv project"
+entry = "index.html"
+build = "server"
+categories = ["strategy"]
+enabled = false
+notes = "heavy server stack (GPL server, AGPL web client)"

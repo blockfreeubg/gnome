@@ -1,0 +1,159 @@
+{
+  "comment": "Generated from frontend/src/shared/proxy-origin.ts by running its functions (tests/e2e/engine/suites/backend-proxy.mjs --write-fixture). Do not edit by hand.",
+  "PROXIED_DOCUMENT_CSP": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'",
+  "ENGINE_HOST_CSP_DIRECTIVES": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob:; form-action 'self'",
+  "CUSTOM_WISP_CONNECT_SOURCES": "ws: wss:",
+  "engineHostCsp": [
+    {
+      "appOrigins": [],
+      "customWisp": false,
+      "csp": "frame-ancestors 'none'; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob:; form-action 'self'"
+    },
+    {
+      "appOrigins": [],
+      "customWisp": true,
+      "csp": "frame-ancestors 'none'; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob: ws: wss:; form-action 'self'"
+    },
+    {
+      "appOrigins": [
+        "https://gnome.example.com"
+      ],
+      "customWisp": false,
+      "csp": "frame-ancestors https://gnome.example.com; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob:; form-action 'self'"
+    },
+    {
+      "appOrigins": [
+        "https://gnome.example.com"
+      ],
+      "customWisp": true,
+      "csp": "frame-ancestors https://gnome.example.com; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob: ws: wss:; form-action 'self'"
+    },
+    {
+      "appOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173"
+      ],
+      "customWisp": false,
+      "csp": "frame-ancestors http://127.0.0.1:8080 http://127.0.0.1:5173; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob:; form-action 'self'"
+    },
+    {
+      "appOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173"
+      ],
+      "customWisp": true,
+      "csp": "frame-ancestors http://127.0.0.1:8080 http://127.0.0.1:5173; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob: ws: wss:; form-action 'self'"
+    },
+    {
+      "appOrigins": [
+        "'self'"
+      ],
+      "customWisp": false,
+      "csp": "frame-ancestors 'self'; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob:; form-action 'self'"
+    },
+    {
+      "appOrigins": [
+        "'self'"
+      ],
+      "customWisp": true,
+      "csp": "frame-ancestors 'self'; default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob: ws: wss:; form-action 'self'"
+    }
+  ],
+  "bareMuxWorkerCsp": [
+    {
+      "customWisp": false,
+      "csp": "connect-src 'self'"
+    },
+    {
+      "customWisp": true,
+      "csp": "connect-src 'self' ws: wss:"
+    }
+  ],
+  "proxyScriptCsp": [
+    {
+      "appOrigins": [],
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'; frame-ancestors 'self'"
+    },
+    {
+      "appOrigins": [
+        "https://gnome.example.com"
+      ],
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'; frame-ancestors 'self' https://gnome.example.com"
+    },
+    {
+      "appOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173"
+      ],
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'; frame-ancestors 'self' http://127.0.0.1:8080 http://127.0.0.1:5173"
+    }
+  ],
+  "bareMuxWorkerScriptCsp": [
+    {
+      "appOrigins": [],
+      "customWisp": false,
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'; frame-ancestors 'self'"
+    },
+    {
+      "appOrigins": [],
+      "customWisp": true,
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob: ws: wss:; form-action 'self'; frame-ancestors 'self'"
+    },
+    {
+      "appOrigins": [
+        "https://gnome.example.com"
+      ],
+      "customWisp": false,
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'; frame-ancestors 'self' https://gnome.example.com"
+    },
+    {
+      "appOrigins": [
+        "https://gnome.example.com"
+      ],
+      "customWisp": true,
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob: ws: wss:; form-action 'self'; frame-ancestors 'self' https://gnome.example.com"
+    },
+    {
+      "appOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173"
+      ],
+      "customWisp": false,
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob:; form-action 'self'; frame-ancestors 'self' http://127.0.0.1:8080 http://127.0.0.1:5173"
+    },
+    {
+      "appOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173"
+      ],
+      "customWisp": true,
+      "csp": "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob: ws: wss:; form-action 'self'; frame-ancestors 'self' http://127.0.0.1:8080 http://127.0.0.1:5173"
+    }
+  ],
+  "proxyInertCsp": [
+    {
+      "appOrigins": [],
+      "csp": "default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+    },
+    {
+      "appOrigins": [
+        "https://gnome.example.com"
+      ],
+      "csp": "default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self' https://gnome.example.com"
+    },
+    {
+      "appOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173"
+      ],
+      "csp": "default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self' http://127.0.0.1:8080 http://127.0.0.1:5173"
+    }
+  ],
+  "bareMuxWorkerPath": "/vendor/bare-mux/worker.js",
+  "engineHostPath": "/engine/",
+  "serviceWorkerPath": "/sw.js",
+  "enginePrefixes": [
+    "/~/sj/",
+    "/uv/service/"
+  ]
+}

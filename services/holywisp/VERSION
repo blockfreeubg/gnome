@@ -1,0 +1,24 @@
+# HolyWisp pin used by GNOME (services/holywisp).
+#
+# fetch-build.sh parses this file (KEY=value lines only; it is never executed) and refuses to build
+# when HOLYWISP_COMMIT differs from the `ARG HOLYWISP_COMMIT=` default in Dockerfile. Change both
+# together and follow README.md "Updating the pin".
+#
+# Why this commit and not upstream HEAD: e0a0f15 is the revision docs/research/holywisp.md verified
+# (build, 16/16 upstream tests under ASan+UBSan, egress policy, real-IP handling, limits). The 8
+# commits after it (fc9cd24 .. 9f75cc4, 2026-11-09/10) rewrite the relay data path (per-stream
+# splice pipes, new flow-control defaults: 128 MiB stream queue, 256 MiB per-client queue), add
+# macOS/Windows ports and an npm wrapper. None of them changes the egress policy, header parsing or
+# signal handling (SIGHUP still kills the server at HEAD). The one bug fix that touches GNOME's
+# targets, parsing integer keys as long long so 32-bit builds accept ws-write-high-water and
+# stream-queue-max, does not matter here: GNOME ships amd64/arm64 builds and gnome.conf never sets
+# those keys. Re-evaluate once the new data path has settled upstream.
+
+HOLYWISP_REPO=https://github.com/Fracital/holyWisp.git
+HOLYWISP_COMMIT=e0a0f159eb6a168cbf67a7628687f9b244cbab48
+HOLYWISP_TREE=b3f0b497c3cde815e3a9125d8e7390d60df7bfcd
+HOLYWISP_COMMIT_DATE=2026-11-07T00:41:10-05:00
+HOLYWISP_VERSION=0.1.0
+# The LICENSE file says ISC. Upstream README.md and deploy/rpm/holywisp.spec say "MIT"; LICENSE is
+# the operative text and is shipped next to every binary and in the image.
+HOLYWISP_LICENSE=ISC

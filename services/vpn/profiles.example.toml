@@ -1,0 +1,52 @@
+# GNOME VPN gateway profiles: the file named by GNOME_VPN_PROFILES (docs/ARCHITECTURE.md §7, services/vpn/README.md).
+#
+# Each [[profile]] is one exit location that users can pick on the VPN page. It must be its own HolyWisp instance
+# whose outbound traffic leaves through a VPN tunnel the operator set up on the server (README.md, recipes A and B).
+# gnome-server routes `wss://<proxy origin>/wisp/p/<id>/` to that instance, probes it every 60 s (TCP connect +
+# WebSocket handshake + first Wisp frame) and reports the result in GET /api/vpn/locations and /api/health.
+#
+# Rules (checked at startup; `gnome-server config check` prints every problem):
+#   id             [a-z0-9-]{1,32}, unique; "direct" is reserved (that is GNOME_WISP_UPSTREAM)
+#   label          shown in the location list, at most 64 characters
+#   country_code   ISO 3166-1 alpha-2 ("se"); stored lowercase
+#   country, city  at most 64 characters each
+#   provider_note  optional, at most 200 characters (e.g. which VPN account/tunnel backs it)
+#   wisp_upstream  "host:port" of the HolyWisp instance. Internal addresses only: an IP literal that is loopback,
+#                  private (RFC 1918 / ULA), CGNAT or link-local (never a cloud-metadata address such as
+#                  169.254.169.254 or fd00:ec2::254), or a DNS name such as a
+#                  Docker service name, whose answers are filtered to such addresses at connect time. Use
+#                  127.0.0.1, never "localhost". Each profile needs its own instance: two profiles cannot share an
+#                  upstream, and none may use GNOME_WISP_UPSTREAM.
+# Unknown keys are errors (typos are caught). At most 64 profiles. Restart gnome-server after editing this file.
+#
+# Only pages opened inside GNOME use these exits; the user's device and its other traffic are unchanged.
+
+# Recipe A (gluetun): HolyWisp instances run in the gluetun container's network namespace and the gateway reaches them
+# by the service name on the shared Docker network (compose.example.yml).
+[[profile]]
+id = "se-got"
+label = "Sweden · Gothenburg"
+country_code = "se"
+country = "Sweden"
+city = "Gothenburg"
+provider_note = "Mullvad WireGuard tunnel, operator's own account"
+wisp_upstream = "gluetun:6002"
+
+[[profile]]
+id = "ch-zrh"
+label = "Switzerland · Zurich"
+country_code = "ch"
+country = "Switzerland"
+city = "Zurich"
+provider_note = "Mullvad SOCKS5 exit through the same tunnel"
+wisp_upstream = "gluetun:6003"
+
+# Recipe B (systemd on the host): holywisp@<id>.service on a loopback port.
+# [[profile]]
+# id = "nl-ams"
+# label = "Netherlands · Amsterdam"
+# country_code = "nl"
+# country = "Netherlands"
+# city = "Amsterdam"
+# provider_note = "Mullvad SOCKS5 exit, host WireGuard tunnel"
+# wisp_upstream = "127.0.0.1:6004"

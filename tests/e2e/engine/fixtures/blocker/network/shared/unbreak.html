@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>unbreak {{host}}</title>
+<!-- Row N19: the page locks its own scrolling (an anti-adblock wall does that); a list's body:style(overflow: auto)
+     unbreak rule restores it, while a list rule that would hide the root element is dropped. Test data (CC0-1.0). -->
+<style>body.locked { overflow: hidden; } html { display: block; }</style>
+<body class="locked">
+<pre id="out">pending</pre>
+<script>
+  addEventListener('load', () => setTimeout(() => {
+    document.getElementById('out').textContent = JSON.stringify({ host: location.hostname, bodyOverflow: getComputedStyle(document.body).overflowY, htmlDisplay: getComputedStyle(document.documentElement).display, sheets: (document.adoptedStyleSheets || []).length });
+  }, 500));
+</script>
+</body>

@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>counts {{host}}</title>
+<!-- Row N13b (docs/WAVE-B3.md §12.2 N13, x4's U3): three ads.localhost images and one trk.localhost image in the
+     markup, which the browser's parser may request before the page's scripts (and the engines' document start) run.
+     counts-script.html makes the same four images by script after load (no parser preload). Test data (CC0-1.0). -->
+<pre id="out">pending</pre>
+<div id="static"><img alt="" src="{{origin:ads}}/beacon?id=n13b-1"><img alt="" src="{{origin:ads}}/beacon?id=n13b-2"><img alt="" src="{{origin:ads}}/beacon?id=n13b-3"><img alt="" src="{{origin:trk}}/beacon?id=n13b-t"></div>
+<script>
+  addEventListener('load', () => {
+    const imgs = [...document.querySelectorAll('#static img')];
+    document.getElementById('out').textContent = JSON.stringify({ host: location.hostname, states: imgs.map((i) => (i.naturalWidth > 0 ? 'load' : 'error')) });
+  });
+</script>

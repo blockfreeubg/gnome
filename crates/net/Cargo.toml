@@ -1,0 +1,26 @@
+[package]
+name = "gnome-net"
+description = "SSRF-safe outbound HTTP client and IP policy shared by GNOME services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Versions and features come from the root [workspace.dependencies] (TLS stack: rustls on ring + webpki roots, no
+# OpenSSL, no aws-lc; see the comments there).
+[dependencies]
+bytes.workspace = true
+http.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+tokio = { workspace = true, features = ["net", "time"] }
+tracing.workspace = true
+# Already in the tree via reqwest; used directly for host parsing (`url::Host`).
+url.workspace = true
+webpki-roots.workspace = true
+
+[dev-dependencies]
+# Encoders for the gzip/brotli decoding tests (same versions reqwest's decoders resolve to).
+brotli.workspace = true
+flate2.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

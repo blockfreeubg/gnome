@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>GNOME e2e U3 site-a (script-made images)</title>
+<h1>site-a U3s</h1>
+<p>The same three ads.localhost images and one trk.localhost image as u3.html, but made by script after the page
+loaded (no speculative preload by the browser's HTML parser): a measurement of how often a browser requests a blocked
+image (row U3's cross-check).</p>
+<pre id="out">site-a u3s</pre>
+<script>
+  addEventListener('load', function () {
+    ['{{origin:ads}}/beacon?id=u3s-1', '{{origin:ads}}/beacon?id=u3s-2', '{{origin:ads}}/beacon?id=u3s-3', '{{origin:trk}}/beacon?id=u3s-t'].forEach(function (src) {
+      var i = new Image();
+      i.src = src;
+      document.body.appendChild(i);
+    });
+  });
+</script>

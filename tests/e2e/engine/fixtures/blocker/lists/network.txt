@@ -1,0 +1,16 @@
+! gnome-e2e: id=e2e-network-ads category=ads trusted=false default=true name=GNOME e2e network (ads)
+! Lane x1's rows N1-N18 (docs/WAVE-B3.md §12.2; suite tests/e2e/engine/suites/blocker-network.mjs). Rules name
+! ads.localhost, docblock.localhost or /network/ paths of cdn.localhost and trk.localhost only. Test data written for
+! GNOME's e2e tests (CC0-1.0).
+||ads.localhost^$third-party
+||cdn.localhost^*/network/bf.js^
+||cdn.localhost^*/network/stub.js$script,redirect=noop.js
+||cdn.localhost^*/network/ga.js$script,redirect=google-analytics_ga.js
+||cdn.localhost^*/network/adframe.html$subdocument
+||cdn.localhost^*/network/frame2.html$subdocument,redirect=noop.html
+||docblock.localhost^$document
+||trk.localhost^*/network/rr.js$redirect-rule=noop.js
+! Row N19 (x1's build: x2's validateSelectors with the :style() declarations): on idp.localhost a root/body rule
+! that only restores the page applies, one that would hide it is dropped.
+idp.localhost##body:style(overflow: auto !important)
+idp.localhost##html:style(display: none !important)

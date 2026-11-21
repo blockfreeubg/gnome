@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GNOME spike app</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d100d; color: #ddd; font: 13px system-ui, sans-serif; }
+  #bar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid #333; }
+  #status { opacity: 0.8; }
+  /* The engine host fills the content area (ARCHITECTURE §4.6). */
+  #engine { position: absolute; top: 37px; left: 0; right: 0; bottom: 0; width: 100%; height: calc(100% - 37px); border: 0; }
+</style>
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<div id="bar"><b>GNOME</b><span id="status">starting</span><span id="title"></span></div>
+<iframe id="engine" title="Browser content"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation"
+  allow="fullscreen; clipboard-write; autoplay"></iframe>
+</body>
+</html>

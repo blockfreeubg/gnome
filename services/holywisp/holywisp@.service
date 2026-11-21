@@ -1,0 +1,96 @@
+# holywisp@.service: one HolyWisp egress instance per GNOME VPN exit location (docs/ARCHITECTURE.md §7).
+#
+# Instance <id> runs `holywisp --config /etc/holywisp/holywisp.conf --config /etc/holywisp/egress/<id>.conf`:
+# the shared hardened config, then the location overlay (vpn-egress.conf.example: port, upstream
+# SOCKS5 proxy, in-tunnel DNS, the gateway's address).
+#
+#   install -D -m 0755 check-egress.sh /usr/local/libexec/holywisp/check-egress
+#   install -D -m 0644 vpn-egress.conf.example /etc/holywisp/egress/se-sto.conf   # then fill it in
+#   systemctl edit holywisp@se-sto.service                                         # the drop-in below
+#   systemctl enable --now holywisp@se-sto.service
+#
+# FAIL-CLOSED: the unit may exchange packets with 127.0.0.1 (the gateway, and wireproxy-style local
+# tunnel endpoints) and nothing else. Allow the tunnel side per instance in a drop-in, e.g. for
+# Mullvad through a WireGuard tunnel on this host:
+#   [Service]
+#   IPAddressAllow=10.124.0.0/16 10.64.0.1
+# and order it after the tunnel:
+#   [Unit]
+#   BindsTo=wg-quick@wg-mullvad.service
+#   After=wg-quick@wg-mullvad.service
+# A config without a proxy, or with a typo in it, therefore cannot send users' traffic out of the
+# host's default route. Check that the filter is active: `systemctl show -p IPAddressDeny holywisp@se-sto`
+# (it needs cgroup v2 with BPF; without that systemd logs a warning and runs unfiltered).
+# For a network namespace (kernel WireGuard, mullvad-vpn.md §5.8) add NetworkNamespacePath= and
+# allow the gateway's veth address too.
+[Unit]
+Description=HolyWisp Wisp server for GNOME (VPN egress %i)
+Documentation=https://github.com/Fracital/holyWisp
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+# Both files must be readable by the dynamic UID (0644). Mullvad's SOCKS5 proxies take no credentials;
+# see README.md "VPN egress instances" for a proxy URL that does.
+# HolyWisp starts even with a malformed dns-server (it only logs it) and then resolves through the
+# host's resolver, outside the tunnel. check-egress refuses such overlays (and placeholders, proxy
+# hostnames, port 6001, policy switched off) before the server runs. "+": a read-only check of a
+# root-owned file, run outside the sandbox below.
+ExecStartPre=+/usr/local/libexec/holywisp/check-egress /etc/holywisp/egress/%i.conf
+ExecStart=/usr/local/bin/holywisp --config /etc/holywisp/holywisp.conf --config /etc/holywisp/egress/%i.conf
+SyslogIdentifier=holywisp-%i
+# NO ExecReload: SIGHUP terminates HolyWisp (see holywisp.service). Use `systemctl restart`.
+Restart=always
+RestartSec=2s
+RestartSteps=6
+RestartMaxDelaySec=60s
+RestartPreventExitStatus=2
+TimeoutStopSec=10s
+
+# ---- identity and limits ----
+# Each instance gets its own dynamic UID (no User= on purpose: instances must not share one), so two
+# instances configured with the same port cannot co-bind it through SO_REUSEPORT.
+DynamicUser=yes
+LimitNOFILE=65536
+MemoryMax=512M
+TasksMax=512
+
+# ---- egress firewall (fail-closed, see the header) ----
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1
+
+# ---- sandbox (same as holywisp.service) ----
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+KeyringMode=private
+UMask=0077
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @obsolete @cpu-emulation @swap @reboot @mount @debug @raw-io @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

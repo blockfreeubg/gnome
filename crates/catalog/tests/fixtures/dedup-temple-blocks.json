@@ -1,0 +1,37 @@
+{
+ "_provenance": "Real records, unaltered: 'famobi' is the temple-blocks item of GET https://api.famobi.com/feed (2026-11-10); 'gamepix' is item 64CPP1 of GET https://feeds.gamepix.com/v2/json?sid=1&pagination=96&page=N (2026-11-10). The same game listed by two networks.",
+ "famobi": {
+  "package_id": "temple-blocks",
+  "name": "Temple Blocks",
+  "description": "Think fast, plan smart, and solve the elemental puzzles!",
+  "thumb": "https://img.cdn.famobi.com/portal/html5games/images/tmp/TempleBlocksTeaser.jpg",
+  "thumb_60": "https://img.cdn.famobi.com/portal/html5games/images/tmp/60/TempleBlocksTeaser.jpg",
+  "thumb_120": "https://img.cdn.famobi.com/portal/html5games/images/tmp/120/TempleBlocksTeaser.jpg",
+  "thumb_180": "https://img.cdn.famobi.com/portal/html5games/images/tmp/180/TempleBlocksTeaser.jpg",
+  "link": "https://play.famobi.com/temple-blocks",
+  "date": "2026-01-30",
+  "aspect_ratio": 0,
+  "related": [],
+  "categories": [
+   "puzzle"
+  ],
+  "orientation": "none",
+  "highscores_enabled": true
+ },
+ "gamepix": {
+  "id": "64CPP1",
+  "title": "Temple Blocks",
+  "namespace": "temple-blocks",
+  "description": "Dive into the strategic depths of Temple Blocks, a captivating puzzle adventure where blocks shift and twist in ever-changing patterns. Use your wits to form lines, earn points, and discover hidden treasures as you navigate this endless array of challenges. Strategic foresight is your key to unlocking victory!",
+  "category": "block",
+  "orientation": "landscape",
+  "quality_score": 0.52830189,
+  "width": 800,
+  "height": 600,
+  "date_modified": "Fri, 14 Mar 2025 10:16:14 GMT",
+  "date_published": "Fri, 14 Mar 2025 10:16:14 GMT",
+  "banner_image": "https://img.gamepix.com/games/temple-blocks/cover/temple-blocks.png?w=320",
+  "image": "https://img.gamepix.com/games/temple-blocks/icon/temple-blocks.png?w=105",
+  "url": "https://play.gamepix.com/temple-blocks/embed?sid=1"
+ }
+}

@@ -1,0 +1,90 @@
+# GNOME VPN gateway, recipe A (services/vpn/README.md): a Mullvad WireGuard tunnel in gluetun, one HolyWisp
+# instance per exit location inside gluetun's network namespace, and the gnome-server gateway on a private Docker
+# network next to it. Merge the `gnome` keys below into your own gnome-server service.
+#
+# Before `docker compose up`:
+#   - secrets/wireguard_private_key: the PrivateKey of a WireGuard key generated for THIS deployment only (one of the
+#     account's 5 devices; never the key of the official app or another machine). chmod 600.
+#   - .env next to this file: WIREGUARD_ADDRESSES (the IPv4 Address of that key, e.g. 10.66.12.34/32),
+#     GLUETUN_SERVER_CITIES, GLUETUN_API_KEY (`docker run --rm qmcgaw/gluetun:v3.41.3 genkey`), GNOME_SERVER_IMAGE.
+#   - egress/<id>.conf for every HolyWisp instance (README.md "Recipe A", step 3) and profiles.toml
+#     (profiles.example.toml), both 0644.
+# Check the result without starting anything: `docker compose -f compose.example.yml config`.
+#
+# Use your own VPN account for your own household only: Mullvad's terms forbid providing VPN service to others.
+# GNOME is not affiliated with or endorsed by Mullvad VPN AB.
+
+services:
+  gluetun:
+    # Pin by digest in production: docker buildx imagetools inspect qmcgaw/gluetun:v3.41.3
+    image: qmcgaw/gluetun:v3.41.3
+    cap_add: [NET_ADMIN]                       # gluetun's documented requirement (WireGuard + its firewall)
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?the IPv4 Address of this deployment's WireGuard key}
+      SERVER_CITIES: ${GLUETUN_SERVER_CITIES:?gluetun city name of the tunnel relay, e.g. Gothenburg}
+      # The control server (tunnel status, public IP) must not be open on the network: v3.41.3 serves several
+      # routes without authentication unless a default role is set. Never publish port 8000.
+      HTTP_CONTROL_SERVER_ADDRESS: ":8000"
+      HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE: '{"auth":"apikey","apikey":"${GLUETUN_API_KEY:?generate with gluetun genkey}"}'
+      PUBLICIP_ENABLED: "false"                # no third-party IP echo services; GNOME verifies exits itself
+      UPDATER_PERIOD: "168h"
+    secrets: [wireguard_private_key]           # gluetun reads /run/secrets/wireguard_private_key
+    networks:
+      gnome-egress:
+        ipv4_address: 172.30.64.2
+    restart: unless-stopped
+    # No `ports:` at all: the HolyWisp ports and the control server stay on the private network.
+
+  # One service per exit location. The image's entrypoint already loads the hardened gnome.conf; the overlay adds
+  # the location's port, SOCKS5 exit, in-tunnel DNS and the gateway's address.
+  holywisp-se-got:
+    image: gnome-holywisp:0.1.0-e0a0f15
+    network_mode: "service:gluetun"            # inside the tunnel's network namespace: no route around it
+    depends_on:
+      gluetun: { condition: service_healthy }
+    command: ["--config", "/etc/holywisp/egress/se-got.conf"]
+    volumes: ["./egress/se-got.conf:/etc/holywisp/egress/se-got.conf:ro"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ulimits: { nofile: { soft: 65536, hard: 65536 } }
+    restart: unless-stopped                    # no `init: true` (tini would forward SIGHUP, which kills HolyWisp)
+
+  holywisp-ch-zrh:
+    image: gnome-holywisp:0.1.0-e0a0f15
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun: { condition: service_healthy }
+    command: ["--config", "/etc/holywisp/egress/ch-zrh.conf"]
+    volumes: ["./egress/ch-zrh.conf:/etc/holywisp/egress/ch-zrh.conf:ro"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ulimits: { nofile: { soft: 65536, hard: 65536 } }
+    restart: unless-stopped
+
+  # Your gnome-server service: only the keys this recipe needs. It keeps its own networks (the public one, the
+  # direct HolyWisp) and joins gnome-egress with a fixed address, which each overlay names as trusted-proxy.
+  gnome:
+    image: ${GNOME_SERVER_IMAGE:?your gnome-server image}
+    environment:
+      GNOME_VPN_PROFILES: /etc/gnome/vpn-profiles.toml
+    volumes: ["./profiles.toml:/etc/gnome/vpn-profiles.toml:ro"]
+    networks:
+      gnome-egress:
+        ipv4_address: 172.30.64.10
+
+networks:
+  gnome-egress:
+    # Attach nothing but gluetun and the gateway. Keep it outside 10.64.0.0/10 (Mullvad's tunnel, DNS and SOCKS5
+    # addresses live there). Not `internal`: gluetun reaches the VPN relay through it.
+    ipam:
+      config:
+        - subnet: 172.30.64.0/24
+
+secrets:
+  wireguard_private_key:
+    file: ./secrets/wireguard_private_key

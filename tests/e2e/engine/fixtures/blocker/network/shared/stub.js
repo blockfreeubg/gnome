@@ -1,0 +1,1 @@
+window.gnomeRealStub = 1;

@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>insists on its parameter</title></head>
+<body>
+<pre id="out">pending</pre>
+<script>
+  // Row P10: a site that sends the browser back to its tracked URL whenever the parameter is missing. GNOME strips it at
+  // most 3 times in 10 s per tab, then the page gets it and stops (no endless loop). A cap of 12 rounds protects the
+  // test run if the guard failed.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var n = Number(sessionStorage.getItem('gnome-e2e-loop') || '0');
+    if (!q.has('utm_source') && n < 12) {
+      sessionStorage.setItem('gnome-e2e-loop', String(n + 1));
+      location.replace(location.pathname + '?utm_source=loop&round=' + (n + 1));
+    } else {
+      document.getElementById('out').textContent = JSON.stringify({ url: location.href, rounds: n });
+    }
+  })();
+</script>
+</body>
+</html>

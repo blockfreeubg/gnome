@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>form and frame</title></head>
+<body>
+<pre id="out">ready</pre>
+<!-- Row P8: a POST form keeps its URL (parameters stay); a frame document is stripped. -->
+<form id="f" method="post" action="{{origin:site-a}}/echo?format=html&amp;utm_source=post&amp;id=8">
+  <input type="hidden" name="field" value="value">
+  <button id="go" type="submit">send</button>
+</form>
+<iframe id="frame" src="{{origin:site-b}}/echo?format=html&amp;utm_source=frame&amp;fbclid=f8&amp;id=8"></iframe>
+</body>
+</html>
