@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { api } from '../lib/api';
 import type { BookmarkRecord, HistoryRecord } from '../lib/idb';
 import { createDefaultSettings } from './defaults';
 import type { Settings } from './schema';
 import {
   bookmarkFromWire,
   bookmarkToWire,
+  httpRecordTransport,
   syncedPart,
   syncRecordsOnce,
   syncSettingsOnce,
@@ -421,3 +423,45 @@ describe('record sync', () => {
     expect(pending).toEqual([]);
   });
 });
+
+describe('httpRecordTransport: bookmark pages (WAVE-D D22)', () => {
+  it('sends limit=1000, follows next_cursor and the engine applies every page', async () => {
+    const wire = (n: number) => ({ id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, parent_id: null, kind: 'bookmark', title: `b${n}`, url: `https://example.com/${n}`, position: n, created_at: 1, updated_at: 2, deleted: false });
+    const pages: Record<string, { items: unknown[]; next_cursor: string | null; server_time: number }> = {
+      '': { items: [wire(1), wire(2)], next_cursor: 'c1', server_time: 50 },
+      c1: { items: [wire(3)], next_cursor: null, server_time: 51 },
+    };
+    const seen: Array<Record<string, string | number>> = [];
+    const get = vi.spyOn(api, 'get').mockImplementation((async (path: string, opts?: { query?: Record<string, string | number> }) => {
+      expect(path).toBe('/api/sync/bookmarks');
+      const q = opts?.query ?? {};
+      seen.push(q);
+      return pages[String(q.cursor ?? '')];
+    }) as typeof api.get);
+    try {
+      const applied: unknown[] = [];
+      const adapter = {
+        kind: 'bookmarks' as const,
+        pending: async () => [],
+        acknowledge: async () => {},
+        applyRemote: async (items: unknown[]) => void applied.push(...items),
+      } as unknown as RecordSyncAdapter<'bookmarks'>;
+      let cursor: number | null = 7;
+      const res = await syncRecordsOnce(adapter, {
+        userId: 1,
+        transport: httpRecordTransport,
+        cursors: { get: async () => cursor, set: async (_k, _u, s) => void (cursor = s) },
+      });
+      expect(res.pulled).toBe(3);
+      expect(applied).toHaveLength(3);
+      expect(seen).toEqual([
+        { since: 7, limit: 1000 },
+        { since: 7, limit: 1000, cursor: 'c1' },
+      ]);
+      expect(cursor).toBe(51);
+    } finally {
+      get.mockRestore();
+    }
+  });
+});
+

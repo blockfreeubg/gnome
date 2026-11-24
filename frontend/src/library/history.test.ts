@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createChangeHub } from './changes';
 import type { LibraryDb } from './db';
-import { CAP_CHECK_EVERY, createHistoryStore, MAX_VISITS, QUOTA_EVICT_MIN, SUGGEST_SCAN, TITLE_WINDOW_MS, type HistoryPrefs } from './history';
+import { CAP_CHECK_EVERY, createHistoryStore, HISTORY_BYTES_TRIM_TO, MAX_HISTORY_BYTES, MAX_VISITS, QUOTA_EVICT_MIN, SUGGEST_SCAN, TITLE_WINDOW_MS, visitBytes, type HistoryPrefs } from './history';
 import { DAY_MS } from './match';
 import { clock, LIBRARY_DBS, uuids } from './testing/dbs';
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 describe.each(LIBRARY_DBS)('history store on %s', (_name, makeDb) => {
-  async function setup(prefs: Partial<HistoryPrefs> = {}, limits: { maxVisits?: number; capCheckEvery?: number } = {}) {
+  async function setup(prefs: Partial<HistoryPrefs> = {}, limits: { maxVisits?: number; capCheckEvery?: number; maxBytes?: number } = {}) {
     const raw: LibraryDb = await makeDb();
     // Counts the records each query hands to the store (directly or through its filter): the work an event causes.
     let reads = 0;
@@ -165,6 +165,50 @@ describe.each(LIBRARY_DBS)('history store on %s', (_name, makeDb) => {
     // The newest survive.
     expect(left[0]!.url).toBe('https://flood.example/94');
     expect(left.every((v) => v.url.startsWith('https://flood.example/'))).toBe(true);
+  });
+
+  it(`keeps the visits' estimated size within the byte budget (default ${MAX_HISTORY_BYTES} B), oldest first, with the count cap`, async () => {
+    expect(MAX_HISTORY_BYTES).toBe(64 * 1024 * 1024);
+    expect(visitBytes({ url: 'https://a.example/', title: 'Ab' })).toBe(2 * (18 + 2) + 96);
+    const maxBytes = 20_000;
+    const { store, raw, c } = await setup({ retentionDays: 0 }, { maxVisits: 1000, capCheckEvery: 5, maxBytes });
+    // A store over the budget at start (≈ 1.2 KB per seeded visit) is trimmed by prune() to 90 % of it, oldest first.
+    const seed = Array.from({ length: 30 }, (_, i) => ({ id: `seed-${String(i).padStart(3, '0')}`, url: `https://seed.example/${i}/${'p'.repeat(500)}`, title: null, visitedAt: c.now() - 1e9 + i }));
+    await raw.putMany('history', seed);
+    const dropped = await store.prune();
+    expect(dropped).toBeGreaterThan(0);
+    const left = await store.query({ limit: 100 });
+    expect(left.length).toBe(30 - dropped);
+    expect(left.at(-1)!.url.startsWith(`https://seed.example/${dropped}/`)).toBe(true);
+    expect(await store.estimatedBytes()).toBeLessThanOrEqual(maxBytes * HISTORY_BYTES_TRIM_TO);
+    // A flood of large visits (also synced ones) never leaves the estimate far above the budget.
+    for (let i = 0; i < 60; i++) {
+      c.advance(1000);
+      await store.recordVisit({ url: `https://flood.example/${i}/${'q'.repeat(400)}`, title: 'T'.repeat(200), at: c.now() });
+      expect(await store.estimatedBytes()).toBeLessThanOrEqual(maxBytes + 5 * visitBytes({ url: `https://flood.example/${i}/${'q'.repeat(400)}`, title: 'T'.repeat(200) }));
+    }
+    await store.sync.applyRemote(
+      Array.from({ length: 10 }, (_, i) => ({ id: `remote-${i}`, url: `https://remote.example/${i}/${'r'.repeat(600)}`, title: null, visitedAt: c.now() + i })),
+      { clearedBefore: null },
+    );
+    await store.prune();
+    expect(await store.estimatedBytes()).toBeLessThanOrEqual(maxBytes);
+    const newest = await store.query({ limit: 1 });
+    expect(newest[0]!.id).toBe('remote-9');
+    // The running estimate equals a recompute from every visit (a second store over the same database recomputes).
+    await store.updateTitle(`https://flood.example/59/${'q'.repeat(400)}`, 'short');
+    await store.removeUrl(`https://remote.example/3/${'r'.repeat(600)}`);
+    const running = await store.estimatedBytes();
+    const fresh = createHistoryStore({ db: raw, prefs: () => ({ enabled: true, retentionDays: 0 }), now: c.now, uuid: uuids('b'), hub: createChangeHub('history', { crossTab: false }) });
+    expect(await fresh.estimatedBytes()).toBe(running);
+    const all = await raw.query('history');
+    expect(running).toBe(all.reduce((n, r) => n + visitBytes(r), 0));
+    // remove(ids) makes the estimate unknown; the next read recomputes it.
+    await store.remove([all[0]!.id]);
+    expect(await store.estimatedBytes()).toBe(running - visitBytes(all[0]!));
+    await store.clear();
+    expect(await store.estimatedBytes()).toBe(0);
+    fresh.close();
   });
 
   it('removes by id, by exact URL (resolving the count), by range and all, notifying listeners', async () => {
@@ -351,5 +395,22 @@ describe('history restore (Undo)', () => {
     await store.removeUrl('https://a.example/');
     await store.restore(visits);
     expect((await store.query({ limit: 10 })).map((v) => v.id)).toEqual(visits.map((v) => v.id));
+  });
+});
+
+describe('history byte budget recompute (unit benchmark, WAVE-D D21)', () => {
+  it('recomputes the estimate of 100 000 visits at start', async () => {
+    const { createMemoryDb } = await import('./testing/memory-db');
+    const db = createMemoryDb();
+    const c = clock();
+    const rows = Array.from({ length: 100_000 }, (_, i) => ({ id: `v-${i}`, url: `https://example.com/page/${i}?q=${'x'.repeat(100)}`, title: `Page ${i}`, visitedAt: c.now() - i }));
+    await db.putMany('history', rows);
+    const store = createHistoryStore({ db, prefs: () => ({ enabled: true, retentionDays: 0 }), now: c.now, uuid: uuids(), hub: createChangeHub('history', { crossTab: false }) });
+    const t = performance.now();
+    expect(await store.prune()).toBe(0);
+    const ms = performance.now() - t;
+    console.info(`[D21] recompute + cap check of 100 000 visits (memory db): ${ms.toFixed(1)} ms`);
+    expect(await store.estimatedBytes()).toBe(rows.reduce((n, r) => n + visitBytes(r), 0));
+    store.close();
   });
 });

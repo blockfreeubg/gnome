@@ -1,0 +1,277 @@
+{
+ "pass": true,
+ "cases": 51,
+ "equivalent": 51,
+ "diffs": [],
+ "sha": [
+  {
+   "config": "rust",
+   "equal": true,
+   "sent": "5ea40cbdafedf661b5b6a3a89ca0410b3cc346fe0aa72e8251421843f102f837",
+   "echoed": "5ea40cbdafedf661b5b6a3a89ca0410b3cc346fe0aa72e8251421843f102f837"
+  },
+  {
+   "config": "node1",
+   "equal": true,
+   "sent": "5ea40cbdafedf661b5b6a3a89ca0410b3cc346fe0aa72e8251421843f102f837",
+   "echoed": "5ea40cbdafedf661b5b6a3a89ca0410b3cc346fe0aa72e8251421843f102f837"
+  }
+ ],
+ "statuses": [
+  [
+   "index br",
+   200,
+   200
+  ],
+  [
+   "index identity",
+   200,
+   200
+  ],
+  [
+   "HEAD index",
+   200,
+   200
+  ],
+  [
+   "SPA fallback /browse",
+   200,
+   200
+  ],
+  [
+   "SPA fallback /settings/x",
+   200,
+   200
+  ],
+  [
+   "asset br",
+   200,
+   200
+  ],
+  [
+   "asset gzip",
+   200,
+   200
+  ],
+  [
+   "asset identity",
+   200,
+   200
+  ],
+  [
+   "asset br;q=0",
+   200,
+   200
+  ],
+  [
+   "asset 304",
+   304,
+   304
+  ],
+  [
+   "asset 304 br",
+   304,
+   304
+  ],
+  [
+   "css asset",
+   200,
+   200
+  ],
+  [
+   "asset on proxy",
+   200,
+   200
+  ],
+  [
+   "missing asset 404",
+   404,
+   404
+  ],
+  [
+   "missing file 404",
+   404,
+   404
+  ],
+  [
+   "manifest",
+   200,
+   200
+  ],
+  [
+   "POST / 405",
+   403,
+   403
+  ],
+  [
+   "sw.js on proxy",
+   200,
+   200
+  ],
+  [
+   "sw.js on app 404",
+   404,
+   404
+  ],
+  [
+   "vendor br (large)",
+   200,
+   200
+  ],
+  [
+   "vendor identity (large)",
+   200,
+   200
+  ],
+  [
+   "vendor on app 404",
+   404,
+   404
+  ],
+  [
+   "engine host",
+   200,
+   200
+  ],
+  [
+   "engine host deep",
+   200,
+   200
+  ],
+  [
+   "SPA path on proxy 404",
+   404,
+   404
+  ],
+  [
+   "reserved /api 404",
+   404,
+   404
+  ],
+  [
+   "reserved encoded /%61pi 404",
+   404,
+   404
+  ],
+  [
+   "reserved /admin 404",
+   404,
+   404
+  ],
+  [
+   "api config",
+   200,
+   200
+  ],
+  [
+   "api session (none)",
+   401,
+   401
+  ],
+  [
+   "ticket without header 403",
+   403,
+   403
+  ],
+  [
+   "ticket mint (anonymous)",
+   200,
+   200
+  ],
+  [
+   "ticket mint (session)",
+   200,
+   200
+  ],
+  [
+   "ticket bad JSON 400",
+   400,
+   400
+  ],
+  [
+   "ticket unknown route 422",
+   422,
+   422
+  ],
+  [
+   "ticket profile route",
+   200,
+   200
+  ],
+  [
+   "api session (cookie)",
+   200,
+   200
+  ],
+  [
+   "probe valid 426",
+   426,
+   426
+  ],
+  [
+   "probe missing 401",
+   401,
+   401
+  ],
+  [
+   "probe malformed 401",
+   401,
+   401
+  ],
+  [
+   "probe bad mac 401",
+   401,
+   401
+  ],
+  [
+   "probe two tickets 401",
+   401,
+   401
+  ],
+  [
+   "probe wrong route 401",
+   401,
+   401
+  ],
+  [
+   "probe profile ticket on direct 401",
+   401,
+   401
+  ],
+  [
+   "probe unknown profile 404",
+   404,
+   404
+  ],
+  [
+   "upgrade without Origin 403",
+   403,
+   403
+  ],
+  [
+   "upgrade app Origin 403",
+   403,
+   403
+  ],
+  [
+   "upgrade bad version 426",
+   426,
+   426
+  ],
+  [
+   "upgrade bad key 400",
+   400,
+   400
+  ],
+  [
+   "upgrade without ticket 401",
+   401,
+   401
+  ],
+  [
+   "upgrade succeeds 101",
+   101,
+   101
+  ]
+ ]
+}

@@ -101,10 +101,14 @@ pub enum Reject {
     TooManyConnections,
     Upstream,
     ShuttingDown,
+    /// Wisp connections reached 90 % of the effective connection cap (WAVE-D D18).
+    ServerFull,
+    /// The upgrade's head was over 64 KiB from a non-loopback peer (WAVE-D D19).
+    HeadTooLarge,
 }
 
 impl Reject {
-    pub const ALL: [Reject; 9] = [
+    pub const ALL: [Reject; 11] = [
         Reject::RateLimited,
         Reject::UnknownProfile,
         Reject::NotAnUpgrade,
@@ -114,6 +118,8 @@ impl Reject {
         Reject::TooManyConnections,
         Reject::Upstream,
         Reject::ShuttingDown,
+        Reject::ServerFull,
+        Reject::HeadTooLarge,
     ];
 
     pub fn name(self) -> &'static str {
@@ -127,6 +133,8 @@ impl Reject {
             Self::TooManyConnections => "too_many_connections",
             Self::Upstream => "upstream",
             Self::ShuttingDown => "shutting_down",
+            Self::ServerFull => "server_full",
+            Self::HeadTooLarge => "head_too_large",
         }
     }
 }
@@ -420,6 +428,14 @@ impl Gateway {
         if is_probe(&req) {
             return self.probe(&state, &upstream, req.uri().query(), &route).await;
         }
+        // D19: an upgraded connection never needs a large head; only development's loopback peers (whose
+        // flooded cookies reach the proxy port too) may send one.
+        if crate::limits::head_size(&req) > crate::limits::SMALL_HEAD
+            && !crate::security::client::canonical_ip(client.peer.ip()).is_loopback()
+        {
+            self.stats.reject(Reject::HeadTooLarge);
+            return crate::limits::hardened_431();
+        }
         let forwarded = match forwarded_upgrade(&req) {
             Ok(mut f) => {
                 // HolyWisp gets the route's canonical path, so nothing of the client's URL (the query with the
@@ -442,14 +458,26 @@ impl Gateway {
             Ok(t) => t,
             Err((why, e)) => return self.refuse(why, e),
         };
+        if self.stats.active() >= state.limits.wisp_share() {
+            return self.refuse(
+                Reject::ServerFull,
+                ApiError::too_many_connections("this server has no room for more Wisp connections right now")
+                    .with_extra("tier", serde_json::Value::from("server")),
+            );
+        }
         let slot = match self.caps.acquire(client.ip, ticket.session_ref) {
             Ok(slot) => slot,
             Err(which) => {
-                let msg = match which {
-                    CapExceeded::Ip => "too many concurrent Wisp connections from this address",
-                    CapExceeded::Session => "too many concurrent Wisp connections for this session",
+                let (msg, tier) = match which {
+                    CapExceeded::Ip(tier) => {
+                        (format!("too many concurrent Wisp connections from {}", tier.describe()), tier.name())
+                    }
+                    CapExceeded::Session => ("too many concurrent Wisp connections for this session".into(), "session"),
                 };
-                return self.refuse(Reject::TooManyConnections, ApiError::too_many_connections(msg));
+                return self.refuse(
+                    Reject::TooManyConnections,
+                    ApiError::too_many_connections(msg).with_extra("tier", serde_json::Value::from(tier)),
+                );
             }
         };
         if state.shutdown.is_cancelled() {
@@ -470,6 +498,8 @@ impl Gateway {
                 return self.refuse(Reject::Upstream, ApiError::bad_gateway(msg));
             }
         };
+        // The connection keeps its cap permit (and per-peer slot) for the upgraded connection's life.
+        let conn_slot = req.extensions().get::<crate::limits::ConnHold>().and_then(crate::limits::ConnHold::take);
         let on_upgrade = hyper::upgrade::on(&mut req);
         let mut res = Response::new(Body::empty());
         *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
@@ -496,6 +526,7 @@ impl Gateway {
         state.tasks.spawn(
             async move {
                 let _slot = slot;
+                let _conn_slot = conn_slot;
                 let _active = active;
                 let upgraded = match on_upgrade.await {
                     Ok(u) => u,

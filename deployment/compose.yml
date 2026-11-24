@@ -1,0 +1,129 @@
+# GNOME production stack (WAVE-D §5.2, D15): Caddy (the only published service) -> gnome-server -> HolyWisp.
+#
+#   cp deployment/.env.example deployment/.env    # then edit it: hostnames, ACME e-mail
+#   deployment/init-secrets.sh --admin-token     # optional secrets into deployment/secrets/ (never in .env)
+#   docker compose -f deployment/compose.yml up -d --build
+#
+# VPN egress: add -f deployment/compose.vpn.yml (docs/DEPLOYMENT.md "VPN egress").
+name: gnome
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  caddy:
+    <<: *hardened
+    image: ${GNOME_CADDY_IMAGE:-gnome-caddy:0.1.0}
+    build: { context: ., dockerfile: caddy/Dockerfile }
+    user: "65532:65532"
+    group_add: ["${GNOME_SECRETS_GID:-65532}"]
+    ports:
+      - "${GNOME_HTTP_PORT:-80}:8080/tcp"
+      - "${GNOME_HTTPS_PORT:-443}:8443/tcp"
+    environment:
+      GNOME_APP_HOST: ${GNOME_APP_HOST:?set GNOME_APP_HOST in deployment/.env}
+      GNOME_PROXY_HOST: ${GNOME_PROXY_HOST:?set GNOME_PROXY_HOST in deployment/.env}
+      GNOME_APP_UPSTREAM: ${GNOME_NET_PREFIX:-172.30}.80.10:8080
+      GNOME_PROXY_UPSTREAM: ${GNOME_NET_PREFIX:-172.30}.80.10:8081
+      GNOME_TLS_MODE: ${GNOME_TLS_MODE:-acme}
+      GNOME_TLS_CERT_FILE: ${GNOME_TLS_CERT_FILE:-/run/secrets/tls/cert.pem}
+      GNOME_TLS_KEY_FILE: ${GNOME_TLS_KEY_FILE:-/run/secrets/tls/key.pem}
+      GNOME_HSTS: ${GNOME_HSTS:-true}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      CADDY_BIND_MODE: ${CADDY_BIND_MODE:-any}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/tls-${GNOME_TLS_MODE:-acme}.caddy:/etc/caddy/tls-${GNOME_TLS_MODE:-acme}.caddy:ro
+      - ./secrets/tls:/run/secrets/tls:ro
+    tmpfs: ["/tmp:size=16m,noexec,nosuid,nodev"]
+    mem_limit: ${GNOME_CADDY_MEM_LIMIT:-512m}
+    pids_limit: 512
+    networks:
+      edge:
+        ipv4_address: ${GNOME_NET_PREFIX:-172.30}.80.2
+    depends_on:
+      gnome: { condition: service_healthy }
+
+  gnome:
+    <<: *hardened
+    image: ${GNOME_SERVER_IMAGE:-gnome-server:0.1.0}
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      args: { CARGO_BUILD_JOBS: "${CARGO_BUILD_JOBS:-3}" }
+    user: "65532:65532"
+    group_add: ["${GNOME_SECRETS_GID:-65532}"]
+    environment:
+      GNOME_BIND: ${GNOME_NET_PREFIX:-172.30}.80.10:8080
+      GNOME_PROXY_BIND: ${GNOME_NET_PREFIX:-172.30}.80.10:8081
+      GNOME_PUBLIC_ORIGINS: https://${GNOME_APP_HOST:?set GNOME_APP_HOST}
+      GNOME_PROXY_ORIGIN: https://${GNOME_PROXY_HOST:?set GNOME_PROXY_HOST}
+      GNOME_TRUSTED_PROXIES: ${GNOME_NET_PREFIX:-172.30}.80.2/32
+      GNOME_WISP_UPSTREAM: ${GNOME_NET_PREFIX:-172.30}.81.2:6001
+      GNOME_HSTS: ${GNOME_HSTS:-true}
+      GNOME_ACCESS_MODE: ${GNOME_ACCESS_MODE:-open}
+      GNOME_REGISTRATION: ${GNOME_REGISTRATION:-closed}
+      GNOME_SOURCE_URL: ${GNOME_SOURCE_URL:-}
+      GNOME_LOG: ${GNOME_LOG:-info}
+      GNOME_LOG_IPS: ${GNOME_LOG_IPS:-false}
+      # Secrets come from files in deployment/secrets/ (mounted at /run/secrets); empty = unset.
+      GNOME_ADMIN_TOKEN_FILE: ${GNOME_ADMIN_TOKEN_FILE:-}
+      GNOME_ACCESS_CODE_FILE: ${GNOME_ACCESS_CODE_FILE:-}
+      GNOME_SECRET_KEY_FILE: ${GNOME_SECRET_KEY_FILE:-}
+    volumes:
+      - gnome-data:/var/lib/gnome
+      - ./secrets:/run/secrets:ro
+    tmpfs: ["/tmp:size=16m,noexec,nosuid,nodev"]
+    ulimits: { nofile: { soft: 65536, hard: 65536 } }
+    pids_limit: 1024
+    mem_limit: ${GNOME_MEM_LIMIT:-1g}
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/gnome-server", "health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks:
+      edge:
+        ipv4_address: ${GNOME_NET_PREFIX:-172.30}.80.10
+      wisp:
+        ipv4_address: ${GNOME_NET_PREFIX:-172.30}.81.10
+    depends_on: [holywisp]
+
+  holywisp:
+    <<: *hardened
+    image: ${GNOME_HOLYWISP_IMAGE:-gnome-holywisp:0.1.0-e0a0f15}
+    build: { context: ../services/holywisp }
+    command: ["--host", "0.0.0.0", "--trusted-proxy", "${GNOME_NET_PREFIX:-172.30}.81.10/32"]
+    ulimits: { nofile: { soft: 65536, hard: 65536 } }
+    pids_limit: 128
+    mem_limit: 1g
+    networks:
+      wisp:
+        ipv4_address: ${GNOME_NET_PREFIX:-172.30}.81.2
+
+networks:
+  edge:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: ${GNOME_NET_PREFIX:-172.30}.80.0/24
+        - subnet: ${GNOME_NET6_PREFIX:-fd47:6e6f:6d65:80}::/64
+  wisp:
+    ipam:
+      config:
+        - subnet: ${GNOME_NET_PREFIX:-172.30}.81.0/24
+
+volumes:
+  gnome-data:
+  caddy-data:
+  caddy-config:

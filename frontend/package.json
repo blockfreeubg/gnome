@@ -12,6 +12,8 @@
     "dev:engine": "export GNOME_BUILD_ID=\"${GNOME_BUILD_ID:-${npm_package_version}+$(date -u +%Y%m%d%H%M%S).$$}\" && node scripts/copy-vendor.mjs && (vite build --watch --mode engine & vite build -c vite.sw.config.ts --watch & wait)",
     "build": "export GNOME_BUILD_ID=\"${GNOME_BUILD_ID:-${npm_package_version}+$(date -u +%Y%m%d%H%M%S).$$}\" && vite build && vite build -c vite.sw.config.ts && node scripts/copy-vendor.mjs",
     "build:e2e": "GNOME_ENGINE_TEST=1 npm run build",
+    "build:release": "npm run build && node scripts/postbuild.mjs --release",
+    "release:check": "node scripts/postbuild.mjs --check",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.sw.json",
     "test": "vitest run",

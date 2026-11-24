@@ -128,3 +128,38 @@ describe('account sync: one run', () => {
     expect(h.account.sync.error).toBe('the server is not reachable');
   });
 });
+
+describe('account sync: quota refusals (WAVE-D D20)', () => {
+  const quota = (scope: 'account' | 'server') =>
+    new ApiError({
+      status: 413,
+      code: 'payload_too_large',
+      message: 'sync storage for this account is full',
+      fromGnome: true,
+      body: { scope, used_bytes: 70 * 1024 * 1024, quota_bytes: 64 * 1024 * 1024, error: { code: 'quota_exceeded', message: 'full' } },
+    });
+
+  it('stops the refused kind with the message, the others go on, and it is not sent again until it changes', async () => {
+    h.failures.bookmarks = quota('account');
+    await syncNow();
+    expect(h.ran).toEqual(['settings', 'bookmarks', 'history']);
+    expect(h.account.sync.state).toBe('error');
+    expect(h.account.sync.error).toBe(
+      'bookmarks: Sync storage on this server is full (70.0 MB of 64.0 MB). Delete bookmarks or turn off history sync to continue.',
+    );
+    // The next run skips the stopped kind (no request) and keeps the message.
+    h.ran = [];
+    h.failures = {};
+    await syncNow();
+    expect(h.ran).toEqual(['settings', 'history']);
+    expect(h.account.sync.error).toMatch(/^bookmarks: Sync storage on this server is full/);
+  });
+
+  it('names the server when the server-wide cap refused', async () => {
+    const { quotaMessage, quotaRefusal } = await import('./account-sync');
+    expect(quotaMessage(quotaRefusal(quota('server'))!)).toBe("This server's sync storage is full. Try again later or ask its operator.");
+    expect(quotaRefusal(new ApiError({ status: 413, code: 'payload_too_large', message: 'too large', fromGnome: true }))).toBeNull();
+    expect(quotaRefusal(new Error('x'))).toBeNull();
+  });
+});
+

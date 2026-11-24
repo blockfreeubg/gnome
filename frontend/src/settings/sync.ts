@@ -304,7 +304,7 @@ export async function syncRecordsOnce<K extends RecordKind>(
   let pulled = 0;
   let cursor: string | null = null;
   let serverTime = since;
-  // Pull every page first (history pages with next_cursor; bookmarks answer in one page).
+  // Pull every page first (history and bookmark pages with next_cursor).
   for (let guard = 0; guard < 10_000; guard++) {
     const page = await deps.transport.pull(adapter.kind, since, cursor);
     if (page.items.length || page.clearedBefore !== null) {
@@ -408,8 +408,18 @@ export const httpRecordTransport: RecordSyncTransport = {
         clearedBefore: res.cleared_before ?? null,
       };
     }
-    const res = await api.get<{ items: BookmarkWire[]; server_time: number }>('/api/sync/bookmarks', { query });
-    return { items: (res.items ?? []).map(bookmarkFromWire), nextCursor: null, serverTime: res.server_time, clearedBefore: null };
+    // Paged like history (WAVE-D D22): a page ends at `limit` items or 1 MiB of JSON.
+    query.limit = 1000;
+    if (cursor) query.cursor = cursor;
+    const res = await api.get<{ items: BookmarkWire[]; next_cursor?: string | null; server_time: number }>('/api/sync/bookmarks', {
+      query,
+    });
+    return {
+      items: (res.items ?? []).map(bookmarkFromWire),
+      nextCursor: res.next_cursor ?? null,
+      serverTime: res.server_time,
+      clearedBefore: null,
+    };
   },
   async push(kind, items) {
     const body =

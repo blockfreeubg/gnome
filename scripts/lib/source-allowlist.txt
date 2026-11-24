@@ -1,0 +1,43 @@
+# The Corresponding Source of a GNOME release (WAVE-D §4.5 step 2): what scripts/release.sh packs into
+# gnome-<v>-src.tar.gz. `include <path>` adds a file or directory (relative to the repository root); `exclude <regex>`
+# drops every path that matches (anchored ERE on the path relative to the root). The excludes mirror every
+# .gitignore of the tree plus generated and local-only paths. The packed list is then deny-scanned for secrets.
+include Cargo.toml
+include Cargo.lock
+include LICENSE
+include README.md
+include logo.png
+include .editorconfig
+include .gitignore
+include backend
+include crates
+include database
+include frontend
+include services
+include deployment
+include scripts
+include bench
+include tests
+include docs
+
+exclude ^(.*/)?node_modules/
+exclude ^(.*/)?target/
+exclude ^frontend/dist/
+exclude ^frontend/\.svelte-kit/
+exclude ^bench/results/raw/
+exclude ^tests/e2e/engine/results/
+exclude ^tests/e2e/test-results/
+exclude ^tests/e2e/playwright-report/
+exclude ^tests/e2e/spike-engine-host/results/
+exclude ^services/holywisp/build/
+exclude ^deployment/secrets/
+exclude ^deployment/\.env$
+exclude ^deployment/vpn/
+exclude ^release/
+exclude ^data/
+exclude (^|/)\.claude/
+exclude (^|/)\.DS_Store$
+exclude \.log$
+exclude (^|/)\.env(\.[^/]*)?$
+# `keep <regex>` overrides the excludes (the example environment files are source).
+keep (^|/)\.env\.example$

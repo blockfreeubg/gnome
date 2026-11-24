@@ -1,0 +1,30 @@
+{
+  "comment": "Every ceiling of docs/WAVE-D.md §7 (d1a). Bytes for build rows (KB = 1000 B); µs, MiB, KiB, ms or ratios for runtime rows as named. Build-time rows stay report-only (enforce: false) until they are rebased on baseline-1's release dist (D26; open: needs d2a's release build measured). bench/compare.mjs reads the runtime rows; frontend/scripts/postbuild.mjs the build rows.",
+  "build": {
+    "BB1": { "what": "app startup set JS + CSS, gzip", "ceiling": 170000, "enforce": false },
+    "BB2": { "what": "app startup set JS + CSS, brotli", "ceiling": 150000, "enforce": false },
+    "BB3": { "what": "engine host's own startup JS, gzip", "ceiling": 65000, "enforce": false },
+    "BB5": { "what": "largest lazy GNOME chunk, gzip", "ceiling": 60000, "enforce": false },
+    "BB5a": { "what": "blocker chunk and its builder Worker, raw, each", "ceiling": 400000, "enforce": false },
+    "BB5b": { "what": "sw.js growth over baseline-0, raw", "ceiling": 350000, "enforce": false },
+    "BB5c": { "what": "engine host entry chunk, raw", "ceiling": 300000, "enforce": false },
+    "BB6": { "what": "first-load images (P1 cold)", "ceiling": 60000, "enforce": false },
+    "BB7": { "what": "release dist/ on disk", "ceiling": 41943040, "enforce": false },
+    "BB8": { "what": ".map files + sourceMappingURL in GNOME files", "ceiling": 0, "enforce": true },
+    "BB9": { "what": "gnome-server stripped static musl, x86_64 and aarch64, each", "ceiling": 12582912, "enforce": false },
+    "BB10": { "what": "gnome-server image per architecture, compressed / uncompressed", "ceiling": 31457280, "ceilingUncompressed": 57671680, "enforce": false },
+    "BB11": { "what": "release artifact gnome-<v>-linux-<arch>.tar.gz", "ceiling": 33554432, "enforce": false },
+    "BB12": { "what": "crates in cargo tree -p gnome-server -e normal (recorded)", "ceiling": null, "enforce": false }
+  },
+  "runtime": {
+    "RB1": { "what": "gnome-server RSS at rest (R1 (a)), MiB", "max": 64 },
+    "RB2": { "what": "gnome-server RSS after H1 (a) c=64, MiB", "max": 96 },
+    "RB3": { "what": "gnome-server RSS growth per idle Wisp connection (W4 slope), KiB", "max": 32 },
+    "RB5": { "what": "W1 1x10 through the gateway / HolyWisp direct", "min": 0.7 },
+    "RB6": { "what": "W2 idle latency added by the gateway over HolyWisp direct, µs", "p99Max": 50, "p999Max": 200 },
+    "RB7": { "what": "W3 (a) Wisp setup p99 through the gateway, µs", "max": 5000 },
+    "RB8": { "what": "H1 (a) c=64 req/s rust / node4 (min) and p99 at 5000 req/s (µs)", "min": 1.0, "p99Max": 2000 },
+    "RB9": { "what": "A1 ticket mint p99 at 2000 req/s, µs", "max": 5000 },
+    "RB10": { "what": "S1 startup p50 (a) warm / (b) cold / (c) fresh, ms", "max": [300, 800, 1000] }
+  }
+}

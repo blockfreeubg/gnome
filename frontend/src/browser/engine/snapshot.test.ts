@@ -21,7 +21,7 @@ const config = (over: Partial<ServerConfig['wisp']> = {}, engines: Partial<Serve
     ...over,
   },
   engines: { default: 'scramjet', scramjet: true, ultraviolet: true, ...engines },
-  proxy: { origin: 'http://127.0.0.1:28002', isolated: true },
+  proxy: { origin: 'http://127.0.0.1:28002', isolated: true, cookieHygiene: 'app' },
   source_url: null,
   limits: { max_ws_per_session: 16 },
 });

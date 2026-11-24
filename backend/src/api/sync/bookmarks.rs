@@ -7,9 +7,11 @@
 
 use axum::Json;
 use axum::extract::State;
+use axum::response::Response;
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
+use super::history::{MAX_PAGE, decode_cursor, encode_cursor};
 use super::{MAX_BATCH, next_synced_at, sync_clock};
 use crate::api::validate::{FieldErrors, check_timestamp, check_title, check_url, is_uuid};
 use crate::auth::RequireUser;
@@ -45,10 +47,16 @@ pub struct Bookmark {
     pub deleted: bool,
 }
 
+/// Query of `GET /api/sync/bookmarks` (D22): keyset-paged like history.
 #[derive(Debug, Deserialize)]
-pub struct Since {
+pub struct PageQuery {
     #[serde(default)]
     pub since: Option<i64>,
+    /// 1–1000. Without it (an app from before paging) one page that ends on a `synced_at` boundary.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +67,8 @@ pub struct Batch {
 #[derive(Debug, Serialize)]
 pub struct Changes {
     pub items: Vec<Bookmark>,
+    /// Pass as `cursor` until it is `null` (always `null` without `limit`, D22).
+    pub next_cursor: Option<String>,
     /// Pass back as `since` on the next pull.
     pub server_time: i64,
 }
@@ -74,41 +84,90 @@ pub async fn get(
     State(state): State<AppState>,
     client: ClientInfo,
     RequireUser(u): RequireUser,
-    ApiQuery(q): ApiQuery<Since>,
-) -> Result<Json<Changes>, ApiError> {
+    ApiQuery(q): ApiQuery<PageQuery>,
+) -> Result<Response, ApiError> {
     super::limit(&state, &client, &u)?;
+    if q.limit.is_some_and(|l| !(1..=MAX_PAGE).contains(&l)) {
+        return Err(ApiError::bad_request("limit must be between 1 and 1000"));
+    }
+    let cursor = match q.cursor.as_deref().filter(|c| !c.is_empty()) {
+        Some(c) => Some(decode_cursor(c).ok_or_else(|| ApiError::bad_request("invalid cursor"))?),
+        None => None,
+    };
+    let pull = super::begin_pull(&state, &u)?;
     let since = q.since.unwrap_or(0).max(0);
     let uid = u.user.id;
-    let changes = state
-        .db
-        .read(move |c| -> Result<Changes, ApiError> {
-            let tx = c.unchecked_transaction()?;
-            let items = tx
-                .prepare_cached(
-                    "SELECT id, parent_id, kind, title, url, position, created_at, updated_at, deleted
-                       FROM bookmarks WHERE user_id = ?1 AND synced_at > ?2 ORDER BY synced_at, id",
-                )?
-                .query_map(params![uid, since], |r| {
-                    Ok(Bookmark {
-                        id: r.get(0)?,
-                        parent_id: r.get(1)?,
-                        kind: r.get(2)?,
-                        title: r.get(3)?,
-                        url: r.get(4)?,
-                        position: r.get(5)?,
-                        created_at: r.get(6)?,
-                        updated_at: r.get(7)?,
-                        deleted: r.get(8)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            // The clock itself, never `since`: a cursor from the future (a restored backup, a client bug) is
-            // corrected on the next pull instead of hiding every write until the clock catches up.
-            let server_time = sync_clock(&tx, uid)?;
-            Ok(Changes { items, server_time })
-        })
-        .await?;
-    Ok(Json(changes))
+    let limit = q.limit;
+    let changes = state.db.read(move |c| page(c, uid, since, limit, cursor)).await?;
+    Ok(super::pull_answer(&state, &changes, pull))
+}
+
+fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Bookmark, i64)> {
+    Ok((
+        Bookmark {
+            id: r.get(0)?,
+            parent_id: r.get(1)?,
+            kind: r.get(2)?,
+            title: r.get(3)?,
+            url: r.get(4)?,
+            position: r.get(5)?,
+            created_at: r.get(6)?,
+            updated_at: r.get(7)?,
+            deleted: r.get(8)?,
+        },
+        r.get(9)?,
+    ))
+}
+
+const COLUMNS: &str = "SELECT id, parent_id, kind, title, url, position, created_at, updated_at, deleted, synced_at
+                         FROM bookmarks";
+
+/// One page of changes (D22). With `limit`: at most `limit` items or [`super::PAGE_BYTES`] of JSON, then
+/// `next_cursor`. Without: whole `synced_at` groups until the JSON reaches [`super::PAGE_BYTES`], with `server_time`
+/// at the last group's `synced_at` when more follow, so an old client fetches the rest with `since=`.
+fn page(
+    c: &rusqlite::Connection,
+    uid: i64,
+    since: i64,
+    limit: Option<u32>,
+    cursor: Option<(i64, String)>,
+) -> Result<Changes, ApiError> {
+    let tx = c.unchecked_transaction()?;
+    let clock = sync_clock(&tx, uid)?;
+    let (at, id) = match &cursor {
+        Some((at, id)) if *at > since => (*at, id.clone()),
+        _ => (since, "~".to_string()),
+    };
+    let mut stmt = tx.prepare_cached(&format!(
+        "{COLUMNS} WHERE user_id = ?1 AND (synced_at, id) > (?2, ?3) ORDER BY synced_at, id"
+    ))?;
+    let mut rows = stmt.query(params![uid, at, id])?;
+    let mut items: Vec<Bookmark> = Vec::new();
+    let mut bytes = 0usize;
+    let mut next_cursor = None;
+    let mut server_time = clock;
+    let mut last_at = None;
+    while let Some(row) = rows.next()? {
+        let (b, synced_at) = map_row(row)?;
+        match limit {
+            Some(limit) => {
+                if items.len() == limit as usize || bytes >= super::PAGE_BYTES {
+                    next_cursor = last_at.map(|at| encode_cursor(at, &items[items.len() - 1].id));
+                    break;
+                }
+            }
+            None => {
+                if bytes >= super::PAGE_BYTES && last_at != Some(synced_at) {
+                    server_time = last_at.unwrap_or(clock);
+                    break;
+                }
+            }
+        }
+        bytes += serde_json::to_vec(&b).map_or(0, |v| v.len() + 1);
+        last_at = Some(synced_at);
+        items.push(b);
+    }
+    Ok(Changes { items, next_cursor, server_time })
 }
 
 fn validate(items: &[Bookmark], now: i64) -> Result<(), ApiError> {
@@ -167,10 +226,12 @@ pub async fn post(
     validate(&batch.items, now)?;
     let uid = u.user.id;
     let items = batch.items;
+    let quotas = super::quotas(&state);
     let applied = state
         .db
         .write(move |c| -> Result<Applied, ApiError> {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let before = super::before(&tx, uid)?;
             let synced_at = next_synced_at(&tx, uid, now)?;
             let mut applied = 0;
             {
@@ -233,6 +294,8 @@ pub async fn post(
                     params![uid, tombstones - MAX_TOMBSTONES_PER_USER],
                 )?;
             }
+            // D20: a batch that grew the account past its quota (or the server past its cap) is rolled back whole.
+            super::check_growth(quotas, &tx, uid, before)?;
             tx.commit()?;
             Ok(Applied { applied, server_time: synced_at })
         })

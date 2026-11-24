@@ -69,7 +69,7 @@ services:
   # Your gnome-server service: only the keys this recipe needs. It keeps its own networks (the public one, the
   # direct HolyWisp) and joins gnome-egress with a fixed address, which each overlay names as trusted-proxy.
   gnome:
-    image: ${GNOME_SERVER_IMAGE:?your gnome-server image}
+    image: ${GNOME_SERVER_IMAGE:-gnome-server:0.1.0}     # built by deployment/Dockerfile
     environment:
       GNOME_VPN_PROFILES: /etc/gnome/vpn-profiles.toml
     volumes: ["./profiles.toml:/etc/gnome/vpn-profiles.toml:ro"]

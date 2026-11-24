@@ -99,16 +99,24 @@ async fn copy_streams<C: AsyncRead + AsyncWrite + Unpin>(
     counters.copied.fetch_add(1, Ordering::Relaxed);
     let mut client = Counted { io: client, counter: &counters.up };
     let mut upstream = Counted { io: upstream, counter: &counters.down };
-    if !client_rest.is_empty() {
-        upstream.write_all(&client_rest).await?;
-        counters.up.fetch_add(client_rest.len() as u64, Ordering::Relaxed);
-    }
-    if !upstream_rest.is_empty() {
-        client.write_all(&upstream_rest).await?;
-        counters.down.fetch_add(upstream_rest.len() as u64, Ordering::Relaxed);
-    }
+    let rest_up = write_rest(&mut upstream, client_rest, &counters.up).await?;
+    let rest_down = write_rest(&mut client, upstream_rest, &counters.down).await?;
     let (up, down) = tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
-    Ok(Traffic { up: up + client_rest.len() as u64, down: down + upstream_rest.len() as u64, zero_copy: false })
+    Ok(Traffic { up: up + rest_up, down: down + rest_down, zero_copy: false })
+}
+
+/// Write bytes buffered before the relay started (`client_rest`, `upstream_rest`) and **drop them** before the pump
+/// loop (WAVE-D D19): hyper hands the upgraded connection over with `read_buf.freeze()`, which shares the
+/// allocation the request head was parsed from, so keeping `rest` would keep up to the whole head buffer (8 KiB
+/// normally, about 1 MiB after a flooded head) alive for the connection's lifetime. Returns the length written.
+async fn write_rest<W: AsyncWrite + Unpin>(to: &mut W, rest: Bytes, counter: &AtomicU64) -> io::Result<u64> {
+    let len = rest.len() as u64;
+    if len > 0 {
+        to.write_all(&rest).await?;
+        counter.fetch_add(len, Ordering::Relaxed);
+    }
+    drop(rest);
+    Ok(len)
 }
 
 /// Counts bytes read through it into a shared counter; writes pass through.
@@ -187,21 +195,15 @@ async fn splice_both(
         }
     };
     counters.zero_copy.fetch_add(1, Ordering::Relaxed);
-    if !client_rest.is_empty() {
-        upstream.write_all(&client_rest).await?;
-        counters.up.fetch_add(client_rest.len() as u64, Ordering::Relaxed);
-    }
-    if !upstream_rest.is_empty() {
-        tokio::time::timeout(WRITE_STALL_TIMEOUT, client.write_all(&upstream_rest))
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the client stopped reading"))??;
-        counters.down.fetch_add(upstream_rest.len() as u64, Ordering::Relaxed);
-    }
+    let rest_up = write_rest(&mut upstream, client_rest, &counters.up).await?;
+    let rest_down = tokio::time::timeout(WRITE_STALL_TIMEOUT, write_rest(&mut client, upstream_rest, &counters.down))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the client stopped reading"))??;
     let (up, down) = tokio::try_join!(
         linux::pump(&client, &upstream, &up_pipe, &counters.up, None),
         linux::pump(&upstream, &client, &down_pipe, &counters.down, Some(WRITE_STALL_TIMEOUT)),
     )?;
-    Ok(Traffic { up: up + client_rest.len() as u64, down: down + upstream_rest.len() as u64, zero_copy: true })
+    Ok(Traffic { up: up + rest_up, down: down + rest_down, zero_copy: true })
 }
 
 #[cfg(target_os = "linux")]
@@ -432,5 +434,30 @@ mod tests {
         assert!(started.elapsed() >= WRITE_STALL_TIMEOUT);
         flood.abort();
         let _ = client.shutdown().await;
+    }
+
+    /// WAVE-D D19: once the buffered bytes are written upstream, nothing of the head's buffer stays referenced, so a
+    /// connection opened with a 60 KB head retains no more heap than one opened with a 1 KB head.
+    #[tokio::test]
+    async fn buffered_bytes_are_released_before_the_pump() {
+        struct Owner(Vec<u8>, #[allow(dead_code)] std::sync::Arc<()>);
+        impl AsRef<[u8]> for Owner {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+        for size in [1024usize, 60 * 1024] {
+            let probe = std::sync::Arc::new(());
+            let whole = Bytes::from_owner(Owner(vec![7; size + 512], probe.clone()));
+            // Like hyper's `read_buf.freeze()` remainder: a slice sharing the head's allocation.
+            let rest = whole.slice(size..);
+            drop(whole);
+            assert_eq!(std::sync::Arc::strong_count(&probe), 2, "the slice keeps the allocation");
+            let mut sink = Vec::new();
+            let counter = AtomicU64::new(0);
+            assert_eq!(write_rest(&mut sink, rest, &counter).await.unwrap(), 512);
+            assert_eq!(sink.len(), 512);
+            assert_eq!(std::sync::Arc::strong_count(&probe), 1, "released after the write ({size} B head)");
+        }
     }
 }

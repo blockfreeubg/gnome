@@ -18,6 +18,41 @@ pub struct Metrics {
     duration_sum_us: AtomicU64,
     connections_active: AtomicI64,
     connections_total: AtomicU64,
+    /// Hardening counters (WAVE-D §6.3), read by `/admin/diagnostics` `connections` too.
+    pub limits: LimitCounters,
+}
+
+/// Refusals of the connection caps, in-flight caps and byte budgets ([`crate::limits`]).
+#[derive(Debug, Default)]
+pub struct LimitCounters {
+    /// Connections closed at accept: the peer had `GNOME_MAX_CONNS_PER_IP` open.
+    pub refused_per_ip: AtomicU64,
+    /// Connections answered with the hardened `503` because the connection cap was full.
+    pub overflow_answered: AtomicU64,
+    /// Requests refused by `GNOME_MAX_INFLIGHT_PER_IP`, by tier (`ip`/`/64`, `/56`, `/48`).
+    pub inflight_refused: [AtomicU64; 3],
+    /// Requests whose head was over 64 KiB and found no room in the large-head budget (or the client's 4 slots).
+    pub large_head_refused: AtomicU64,
+    /// Sync answers refused by the answer budget or the per-account pull limit.
+    pub answer_refused: AtomicU64,
+    /// Milliseconds during which the connection cap was full.
+    pub cap_full_ms: AtomicU64,
+    /// Requests for an `https://` origin from a peer outside `GNOME_TRUSTED_PROXIES` (`proxy_trust`).
+    pub untrusted_https: AtomicU64,
+}
+
+impl LimitCounters {
+    pub fn get(counter: &AtomicU64) -> u64 {
+        counter.load(Ordering::Relaxed)
+    }
+
+    pub fn bump(counter: &AtomicU64) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inflight_refused_total(&self) -> u64 {
+        self.inflight_refused.iter().map(|c| c.load(Ordering::Relaxed)).sum()
+    }
 }
 
 impl Default for Metrics {
@@ -30,6 +65,7 @@ impl Default for Metrics {
             duration_sum_us: AtomicU64::new(0),
             connections_active: AtomicI64::new(0),
             connections_total: AtomicU64::new(0),
+            limits: LimitCounters::default(),
         }
     }
 }
@@ -122,6 +158,31 @@ impl Metrics {
         let _ = writeln!(out, "# HELP gnome_http_connections_total Accepted client connections (public listener).");
         let _ = writeln!(out, "# TYPE gnome_http_connections_total counter");
         let _ = writeln!(out, "gnome_http_connections_total {}", self.connections_total());
+        let l = &self.limits;
+        let get = LimitCounters::get;
+        let _ = writeln!(out, "# HELP gnome_http_connections_refused_total Connections refused at accept, by reason.");
+        let _ = writeln!(out, "# TYPE gnome_http_connections_refused_total counter");
+        let _ = writeln!(out, "gnome_http_connections_refused_total{{reason=\"per_ip\"}} {}", get(&l.refused_per_ip));
+        let _ = writeln!(out, "gnome_http_connections_refused_total{{reason=\"cap\"}} {}", get(&l.overflow_answered));
+        let _ =
+            writeln!(out, "# HELP gnome_http_inflight_refused_total Requests refused by the per-client in-flight cap.");
+        let _ = writeln!(out, "# TYPE gnome_http_inflight_refused_total counter");
+        for (i, tier) in crate::limits::Tier::ALL.iter().enumerate() {
+            let n = get(&l.inflight_refused[i]);
+            let _ = writeln!(out, "gnome_http_inflight_refused_total{{tier=\"{}\"}} {n}", tier.name());
+        }
+        let _ = writeln!(
+            out,
+            "# HELP gnome_http_large_head_refused_total Requests over 64 KiB of head without budget room."
+        );
+        let _ = writeln!(out, "# TYPE gnome_http_large_head_refused_total counter");
+        let _ = writeln!(out, "gnome_http_large_head_refused_total {}", get(&l.large_head_refused));
+        let _ = writeln!(out, "# HELP gnome_http_answer_refused_total Sync pulls refused by the answer budget.");
+        let _ = writeln!(out, "# TYPE gnome_http_answer_refused_total counter");
+        let _ = writeln!(out, "gnome_http_answer_refused_total {}", get(&l.answer_refused));
+        let _ = writeln!(out, "# HELP gnome_http_cap_full_seconds_total Time the connection cap was full.");
+        let _ = writeln!(out, "# TYPE gnome_http_cap_full_seconds_total counter");
+        let _ = writeln!(out, "gnome_http_cap_full_seconds_total {}", get(&l.cap_full_ms) as f64 / 1000.0);
     }
 }
 

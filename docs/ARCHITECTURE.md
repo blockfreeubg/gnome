@@ -65,7 +65,7 @@ gnome/
 │   ├── public/             # logo.png (original), brand/ (both never modified), manifest.webmanifest,
 │   │                       # engine/uv.config.js + engine/uv-doc-hook.js (plain scripts, served as they are)
 │   ├── scripts/            # copy-vendor.mjs (pinned engine builds → dist/vendor/** with licenses), visual-qa.mjs,
-│   │                       # qa-components.mjs, rust-crates.mjs; postbuild.mjs, obfuscate.mjs (Wave D)
+│   │                       # qa-components.mjs, rust-crates.mjs; postbuild.mjs, bundle-report.mjs, third-party-notices.mjs (Wave D)
 │   └── src/
 │       ├── shared/         # the contract: engine-protocol.ts, site-rules.ts, transport.ts, proxy-origin.ts,
 │       │                   # engine-hooks.ts, browser-data.ts (+ tests); pure, imported by app, engine host and SW
@@ -1143,10 +1143,23 @@ credentials live only in the server operator's configuration and are never reque
 
 ## 8. Build & deployment
 Frontend: Vite production build (minify, tree-shake, CSS minify via Lightning CSS, hashed assets, no public source
-maps), post-build brotli+gzip precompression, image optimization, optional obfuscation (`GNOME_OBFUSCATE=1`) of
-GNOME-owned chunks only — third-party engine files are copied unmodified with their licenses. Backend: `cargo build
---release` with `lto = "fat"`, `codegen-units = 1`, `strip = true`, and `panic = "unwind"` kept on purpose (a panicking request or task becomes a 500 / is contained instead of aborting every live Wisp connection). Deployment: multi-stage Docker
-image (amd64/arm64), compose with HolyWisp + optional VPN gateways, systemd units, Caddy config.
+maps), then `frontend/scripts/postbuild.mjs` (Wave D): vendor `.map` files dropped in release builds, precompressed
+`.br` (and `.gz` for GNOME's files) siblings written only when they save ≥ 10 % and verified by decompression, the
+`.gnome/files.json`/`build.json` manifests with `SOURCE_DATE_EPOCH`, `licenses/THIRD-PARTY-NOTICES.txt`, and the
+build-time budgets of `scripts/budgets.json`. No obfuscation (D10: minify only). Third-party engine files are copied
+unmodified with their licenses. Image recompression (D12) is not done yet. Releases: `scripts/release.sh` builds, in
+pinned Docker images, a static musl `gnome-server` per architecture (x86_64, aarch64 cross-compiled with
+tonistiigi/xx, no binfmt), the release `dist/`, HolyWisp and the licenses bundle into
+`gnome-<v>-linux-<arch>.tar.gz`, plus the source tarball, `SHA256SUMS`, optionally a signature
+(`ssh-keygen -Y sign` or GnuPG), the images and a no-cache reproducibility check. Deployment (`deployment/`,
+[docs/DEPLOYMENT.md](DEPLOYMENT.md)): the FROM-scratch `gnome-server` image (user 65532, health check), the compose
+stack (only Caddy publishes ports; every service read-only with `cap_drop: ALL`), the Caddyfile (`max_header_size 4MB`,
+a strict CSP on Caddy's own answers, `Cookie` removed on the proxy hostname, a log without client addresses or query
+strings), the systemd unit (`DynamicUser`, `systemd-analyze security` 1.4), secrets as `_FILE` files, Raspberry Pi 4
+notes. Request limits (connection caps with IPv6 prefix tiers, exact head limits per listener and peer trust, the
+large-head and large-answer budgets, sync quotas) live in `backend/src/limits.rs` and are listed in backend/README.md
+and docs/API.md. Backend: `cargo build
+--release` with `lto = "fat"`, `codegen-units = 1`, `strip = true`, and `panic = "unwind"` kept on purpose (a panicking request or task becomes a 500 / is contained instead of aborting every live Wisp connection); the deployment pieces are listed above.
 
 Frontend development (`frontend/`): `npm run dev` (Vite; proxies `/api` to `GNOME_DEV_BACKEND`, default
 `http://127.0.0.1:8080`, and answers `/api/*` with a plain `502` while nothing listens there — the app then reports the

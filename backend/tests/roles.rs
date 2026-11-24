@@ -235,7 +235,7 @@ async fn single_origin_serves_the_union() {
     ];
     check(&app.public, HOST, &table, "single").await;
     let v = app.send(get("/api/config")).await.json();
-    assert_eq!(v["proxy"], json!({"origin": ORIGIN, "isolated": false}));
+    assert_eq!(v["proxy"], json!({"origin": ORIGIN, "isolated": false, "cookieHygiene": "app"}));
     let t = app.client().post("/api/wisp/ticket", json!({})).await.json();
     assert_eq!(t["wisp_url"], "ws://gnome.test/wisp/");
 }
@@ -343,7 +343,7 @@ async fn proxy_origin_health_is_minimal() {
 async fn config_and_tickets_point_at_the_proxy_origin() {
     let app = two_origins(&[("GNOME_WISP_TICKET_TTL_S", "3600")]).await;
     let v = app.send(get("/api/config")).await.json();
-    assert_eq!(v["proxy"], json!({"origin": PROXY_ORIGIN, "isolated": true}));
+    assert_eq!(v["proxy"], json!({"origin": PROXY_ORIGIN, "isolated": true, "cookieHygiene": "app"}));
     assert_eq!(v["wisp"]["ticket_ttl_s"], 3600);
     let t = app.client().post("/api/wisp/ticket", json!({})).await.json();
     assert_eq!(t["wisp_url"], "ws://p.gnome.test/wisp/");

@@ -12,3 +12,7 @@ node_modules/
 .DS_Store
 # HolyWisp binaries and logs from services/holywisp/fetch-build.sh
 /services/holywisp/build/
+/release/
+/tests/e2e/engine/results/
+/deployment/secrets/
+/deployment/.env

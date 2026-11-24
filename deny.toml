@@ -1,0 +1,75 @@
+# cargo-deny policy (WAVE-D D24; written for cargo-deny 0.22.1, the version scripts/audit.sh pins).
+# Run through scripts/audit.sh, which also checks that no `ignore` entry is past its `# expires:` date (at most 90
+# days ahead). docs/AUDIT.md records every finding and its decision.
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
+# Licenses apply to what is distributed: normal and build dependencies (dev dependencies never ship).
+exclude-dev = true
+all-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+# The RustSec advisory database. Vulnerabilities and yanked crates fail; unmaintained and unsound advisories are
+# reported (each gets a decision row in docs/AUDIT.md).
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+# Every entry: { id = "RUSTSEC-…", reason = "…" } on one line, followed by `# expires: YYYY-MM-DD` (≤ 90 days ahead).
+ignore = []
+
+[licenses]
+# Licenses that may be combined with AGPL-3.0-only in a distributed binary, as exact SPDX ids. Everything else
+# (GPL-2.0-only, SSPL, BUSL, "Commons Clause", no license) is denied.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "Zlib",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+]
+confidence-threshold = 0.93
+# The allow-list names what may be combined with AGPL-3.0-only, not what is in the tree today.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# GNOME's own crates are unpublished (AGPL-3.0-only, Cargo.toml).
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+# GNOME avoids C TLS stacks.
+deny = [
+    { crate = "openssl", reason = "C TLS stack; GNOME uses rustls" },
+    { crate = "openssl-sys", reason = "C TLS stack; GNOME uses rustls" },
+    { crate = "native-tls", reason = "C TLS stack; GNOME uses rustls" },
+    { crate = "aws-lc-rs", reason = "C crypto library; GNOME uses ring through rustls" },
+    { crate = "aws-lc-sys", reason = "C crypto library; GNOME uses ring through rustls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

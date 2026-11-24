@@ -1,0 +1,24 @@
+# e2e override (WAVE-D §5.2; d3's suites only): TLS from files (a throwaway CA), Caddy published on loopback lane
+# ports, the .localhost hostnames, no internet refreshes. Not for production.
+#
+#   GNOME_E2E_PORT=11443 GNOME_E2E_HTTP_PORT=11080 docker compose -f compose.yml -f compose.test.yml up -d --build
+services:
+  caddy:
+    ports: !override
+      - "127.0.0.1:${GNOME_E2E_HTTP_PORT:-11080}:8080/tcp"
+      - "127.0.0.1:${GNOME_E2E_PORT:-11443}:8443/tcp"
+    environment:
+      GNOME_APP_HOST: gnome.localhost
+      GNOME_PROXY_HOST: p.gnome.localhost
+      GNOME_TLS_MODE: files
+      CADDY_ADMIN: "off"
+    volumes:
+      - ./caddy/tls-files.caddy:/etc/caddy/tls-files.caddy:ro
+  gnome:
+    environment:
+      GNOME_PUBLIC_ORIGINS: https://gnome.localhost:${GNOME_E2E_PORT:-11443}
+      GNOME_PROXY_ORIGIN: https://p.gnome.localhost:${GNOME_E2E_PORT:-11443}
+      GNOME_FILTERS_REFRESH_HOURS: "0"
+      GNOME_CATALOG_REFRESH_HOURS: "0"
+      GNOME_OSS_FETCH: manual
+      GNOME_LOG_IPS: "true"

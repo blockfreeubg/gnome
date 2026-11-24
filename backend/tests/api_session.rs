@@ -22,7 +22,7 @@ async fn health_and_config() {
     assert!(res.header("x-request-id").is_some_and(|id| !id.is_empty()));
 
     let v = app.send(get("/api/config")).await.json();
-    assert_eq!(v["proxy"], json!({"origin": ORIGIN, "isolated": false}), "single-origin mode");
+    assert_eq!(v["proxy"], json!({"origin": ORIGIN, "isolated": false, "cookieHygiene": "app"}), "single-origin mode");
     assert_eq!(v["access_mode"], "open");
     assert_eq!(v["registration"], "open");
     assert_eq!(v["features"]["accounts"], true);

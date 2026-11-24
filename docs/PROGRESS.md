@@ -84,27 +84,66 @@ Last updated: 2026-11-23 (session 9, Wave C integration step)
       was dropped by the 2026-11-10 decision (embeds are never proxied, rewritten, overlaid or ad-blocked)
 
 ## Phase 7 — Rust optimization & benchmarks
-- [ ] Node.js baseline for hot paths + wisp-js baseline
-- [ ] Benchmarks (throughput, latency, RSS, startup) → `docs/BENCHMARKS.md`
-- [ ] Profile-guided optimizations; release profile (LTO, strip, codegen-units=1)
+- [x] Node.js baseline for hot paths + wisp-js baseline — Wave D d-bench (2026-11-24): `bench/node/` (Node 26,
+      built-ins only, the docs' rules incl. route-bound w2 tickets) and `bench/wispjs/` (wisp-js 0.5.3, LGPL-3.0-or-later);
+      the equivalence check (51 requests header by header, 64 MiB SHA-256 through each gateway) passes
+- [~] Benchmarks (throughput, latency, RSS, startup) → `docs/BENCHMARKS.md` — harness, load generator and one `quick`
+      dev-smoke run on a shared machine (every repeat noisy; not quotable). The quotable run in a quiet window and the
+      5-hour `record` run were skipped for the quick finish (Deferred items)
+- [~] Profile-guided optimizations; release profile (LTO, strip, codegen-units=1) — the release profile exists (fat
+      LTO, `codegen-units = 1`, strip, `panic = "unwind"`); profiling, PGO and the d1b optimization loop were skipped
 
 ## Phase 8 — Security & production
 - [~] Unit/integration/e2e tests — 2026-11-18: `cargo test --workspace` 431 passed (2 real-HolyWisp tests are `#[ignore]`d
       and pass by hand), frontend 897 unit tests, the Wave B e2e runner (154 rows on the integration run) and the
       Playwright harnesses (engine-host spike, Settings, About, visual QA, component QA)
-- [ ] Dependency audits (cargo audit/deny, npm audit)
+- [x] Dependency audits (cargo audit/deny, npm audit) — `scripts/audit.sh` (cargo-deny with `deny.toml`, npm audit with
+      the shipped/build-only policy, vendored wasm versions, pinned images); online run passes on the final tree
+      (2026-11-24, after `url` 2.5.9 and `publish = false`); govulncheck on Caddy/gluetun not run (`docs/AUDIT.md`)
 - [~] SSRF / origin / rate-limit / admin-exposure tests — backend tests cover gnome-net's IP policy (incl. DNS-rebinding
       decoys), per-role route tables, CSRF/Origin, rate limits and admin isolation; the spike's adversarial review attacked
       both origins from a proxied page
-- [ ] Production build pipeline (minify, tree-shake, precompress, image optimization, no public source maps, opt-in obfuscation of GNOME-owned code only)
-- [ ] Deployment (Docker, compose, systemd, Caddy, Raspberry Pi 4 notes)
+- [~] Production build pipeline (minify, tree-shake, precompress, optimize GNOME's images, no public source maps; no
+      obfuscation (D10)) — `postbuild.mjs` (precompressed `.br`/`.gz`, vendor maps dropped, manifests, third-party
+      notices, budgets), `npm run build:release` / `release:check`, `scripts/release.sh` (both architectures, signed
+      `SHA256SUMS`, images). Open: image recompression (D12, oxipng not installed), the third-party source archive
+      with verified upstream commits (D27), the startup-set work (d2b)
+- [x] Deployment (Docker, compose, systemd, Caddy, Raspberry Pi 4 notes) — `deployment/` + `docs/DEPLOYMENT.md` +
+      `START-GUIDE.md` (2026-11-24): FROM-scratch image (26 MB), compose stack run here behind Caddy with a throwaway
+      CA, `systemd-analyze security` 1.4, the syscall trace (reduced workload) fits the unit's filter, aarch64 under
+      QEMU user-mode. Not tested: real DNS/ACME, booting the units, Pi hardware
 
 ## Phase 9 — Delivery
-- [~] README, setup, dev/prod commands, deployment guide, env var reference, architecture explanation — root
-      `README.md` written and verified 2026-11-18 (workflow `wf_b4427f98-2f1`); each wave keeps it current; the
-      deployment guide follows Wave D
+- [x] README, setup, dev/prod commands, deployment guide, env var reference, architecture explanation — root
+      `README.md` written and verified 2026-11-18 (workflow `wf_b4427f98-2f1`), kept current by every wave;
+      `docs/DEPLOYMENT.md` and `START-GUIDE.md` (this PC and Ubuntu 24.04) added in Wave D (2026-11-24)
 
-## ▶ RESUME HERE (session 9, 2026-11-24 — Wave C finished (`c-finish`); next: Wave D)
+## ▶ RESUME HERE (session 9, 2026-11-24 — Wave D finished, lean (`d-final`); next: Wave E, the final review)
+
+- **Wave D final step (`d-final`, 2026-11-24).** Change requests applied (`url` 2.5.9, `publish = false`,
+  `lib/api.ts` `cookieHygiene` + `quota_exceeded`). `cargo fmt --check`, `clippy -D warnings` clean; `cargo test
+  --workspace --locked` 536 passed, 5 ignored; `npm run check` 0 errors, `npm test` 1516/1516; `scripts/audit.sh`
+  online: pass. `scripts/release.sh --arch x86_64,aarch64 --image --sign <throwaway>`: both artifacts (25.8 MB, 25.5
+  MB) and image archives, signature verified and a tamper case failed; `release.sh` now also checksums the image
+  archives. `deployment/check.sh`, `tests/image.sh`, `tests/arm64.sh` (qemu-aarch64, no binfmt), `tests/syscalls.sh`
+  (reduced workload) pass; the compose stack ran healthy behind Caddy with a throwaway CA (shell smoke; the DC/DP/OP
+  suites are not written); the artifact installed and ran in an unprivileged `ubuntu:24.04` container. Full e2e runner,
+  both browsers at once (`GNOME_E2E_FLOOD=1`, offline, prebuilt dist): Chromium 813 pass / 14 fail / 27 skip,
+  Firefox 805 / 20 / 29; every failure is a known limit (A0, A7, cs-href, P4, P6m, P12, borrow-natives, clipboard,
+  Firefox autoplay, the WebRTC gaps, Firefox's Scramjet SharedWorker row, the `sw` build-id row under `--no-build`)
+  or a flake that passed on its re-run (Firefox `host-nav` link-form-replace-reload, Chromium `shell-sw-update`).
+  Wave C/D suites without failures: `cookie-flood` 10/0/5, `build-release` 8/0/1, `backend-games` 27/0/3,
+  `games-ui` 12/0/5, `games-player` 15/0/2 (Chromium) and 14/0/3 (Firefox), `vpn-ui` 28/0/3. No quiet window for the
+  benchmarks (a desktop application held one core at 100 %): the quotable run, the allocator check and the record
+  run are open. New: `START-GUIDE.md` (this PC + Ubuntu 24.04). Open items: Deferred items, "Wave D open items".
+  Scripts: the session kit's `handoff/progress/d-final-scripts/`.
+
+- **Wave D, lean (`wf_88dddedd-f89`, launched 2026-11-24 ~01:30, session `27931f59-…`)**: `d-harden` (d4, ports 10000-)
+  ∥ `d-ship` (d2 + d3, 11000-) ∥ `d-bench` (d1a, 12000-) → `d-final` (13000-14999: a short benchmark run, release
+  and images, a focused review, the matrix, §11 documents, `START-GUIDE.md`). The user asked for a quick, easy,
+  low-usage finish: no long record runs and no d1b optimization loop. D10 is settled as minify only. Waves B3 and C
+  are committed on branch `waves-b3-c-d` (900a6ff); the orchestrator commits Wave D and pushes when the run ends.
+  Kit: that session's `handoff/` (progress logs, reports).
 
 - **Wave C final step (`c-finish`, 2026-11-24).** Everything from the live tree after `c-review-fix` (scripts in
   `handoff/progress/c-finish-scripts/`, logs in the scratchpad `c-finish/logs/`). `cargo fmt --check`, `clippy -D
@@ -444,25 +483,56 @@ Each item needs an owner lane in `docs/WAVE-B.md`. Full reports: `~/.claude/proj
   `crates/catalog/src/blocklist.rs:227` (no `start:` prefix).
 
 ## Deferred items (to schedule in Wave D/E)
-- Per-account sync storage quota (bytes) — today only entry counts bound it (100k history, 20k bookmarks); decide default + API error.
-- Global/per-IP concurrent HTTP connection cap and `LimitNOFILE=` in the gnome-server systemd unit (core review; since
-  2026-11-11 the server raises its soft `RLIMIT_NOFILE` to the hard limit at startup).
-- `GET /api/sync/bookmarks` pagination for very large accounts.
+- ~~Per-account sync storage quota (bytes)~~ — done in Wave D (D20, M3, 2026-11-24): `GNOME_SYNC_QUOTA_MB`, `413 quota_exceeded`, `GET /api/sync/usage`.
+- ~~Global/per-IP concurrent HTTP connection cap and `LimitNOFILE=`~~ — done in Wave D (D17, D18, M2): `GNOME_MAX_CONNECTIONS`, per-peer and in-flight caps, `LimitNOFILE=65536` in the unit.
+- ~~`GET /api/sync/bookmarks` pagination for very large accounts.~~ — done in Wave D (D22): `limit`/`cursor`, 1 MiB pages.
 - ~~Home background images from https: URLs load directly (reveals IP to that host) — Settings must say so or prefer uploaded images.~~ — done 2026-11-11 (Settings → Appearance says so; uploaded pictures stay in the browser).
 - ~~Wave C backend: app CSP `frame-src` from `gnome_catalog` `embed_hosts()` …; OSS fetch step …; the crate's own settings in `VARS`.~~ — done in Wave C (2026-11-23): per-game wrapper policies instead of a shell list (D2, D4), `catalog.oss-fetch` + `/oss/<slug>/` (D5, D6), every catalog variable is a server setting.
-- **Cookie flood across the origin boundary (Wave D decision):** escaped code on the proxy origin can plant about 160 KB+
+- **Cookie flood across the origin boundary — decided in Wave D (D19), partly open:** the server accepts 1 MiB heads from
+  its trusted front within a 64 MiB budget, Caddy removes `Cookie` on the proxy hostname, and the app clears planted
+  cookies (`cookie-hygiene.ts`); the flooded app keeps working in both browsers (CF1, CF2). Open: a flood **evicts the
+  session cookie** in Chromium and Firefox (CF3: signed-in users are signed out; the UI's sign-in prompt was not
+  asserted), and CF5–CF8 (RSS under the attack, separate registrable domain, renderer sharing / `Origin-Agent-Cluster`,
+  1,000 flooded Wisp connections) were not run. Original note: escaped code on the proxy origin can plant about 160 KB+
   of cookies that the app origin also receives (dev two-port: same host; production: a proxy hostname under the app's
   domain can set `Domain=<app domain>`), so every app request exceeds hyper's head limit and the app is unusable. Options:
   put the proxy origin on a separate registrable domain (needs a cross-site engine-host test: partitioned SW and storage),
   or a larger head limit for the app role once a per-IP connection cap exists. Lane e review, 2026-11-12.
-- **Reverse-proxy error pages (Wave D):** Caddy answers oversized request heads itself (default `max_header_size` 1 MB,
+- **Reverse-proxy error pages — done in Wave D (D16):** `max_header_size 4MB` and the strict CSP on Caddy's own
+  `handle_errors` answers and redirects (checked through the compose stack, 2026-11-24). Left: Caddy's (Go
+  net/http's) own `431` for heads over 4 MB carries no CSP; browsers cannot send such a head (≤ 2 MB URL + the
+  cookie jar). Original note: Caddy answers oversized request heads itself (default `max_header_size` 1 MB,
   below Chromium's 2 MB URL limit) with no CSP, which would reopen a permissive realm on the proxy hostname. The
   deployment config must raise the limit above browser limits or add the strict policy to the proxy's own answers.
 - **Synced visits with history off (product decision, Wave E):** `applyRemote` stores other devices' visits even when
   `browser.history.enabled` is off on this device. Proposed: don't store or show them while history is off.
-- **History byte budget:** history is capped at 100,000 visits, but a long forged visit stream (about 500 MB) can still
+- **History byte budget — done in Wave D (D21):** 64 MiB in the client, plus the server's quota trimming. Original note: history is capped at 100,000 visits, but a long forged visit stream (about 500 MB) can still
   fill a small storage quota; add a byte budget.
-- HolyWisp systemd units verified statically only (no real systemd boot); arm64 binaries ran only under QEMU user-mode.
+- systemd units (HolyWisp's and gnome-server's) verified statically only (`systemd-analyze verify`/`security`, a
+  syscall trace in an unprivileged container); arm64 binaries and images ran only under QEMU user-mode. Until a
+  maintainer runs them in a VM and on a Pi.
+- **Wave D open items (quick finish, 2026-11-24; WAVE-D §12 lists the planned ones):**
+  - Benchmarks: no quotable run yet. The `quick` preset in a quiet window, the 5-hour `record` run, AC2/AC6
+    repeatability, the P-rows (`perf-frontend.mjs`), `rust-ctr`/`rust-copy`/`rust+caddy`, W4 at 5k/10k, and the Pi 4
+    numbers (labelled estimates only).
+  - The d1b profiling and optimization loop (O1–O10), PGO, and the release-profile and allocator records (D5, D6, D7;
+    the allocator check was not run).
+  - Budgets: the x86_64 `gnome-server` is 12.85 MB, over BB9's 12.0 MiB ceiling; the engine host startup JS is 125 KB
+    gzip against BB3's 65 KB (report-only); the normal crate tree is 178 against BB12's 167; `scripts/budgets.json`
+    build ceilings not rebased (D26).
+  - Deploy suites `deploy-lib`/`deploy-caddy`/`deploy-compose.mjs` (DC1–DC9, DP1–DP6, OP1–OP2) are not written; a
+    shell smoke of the compose stack through Caddy stands in (the d-final scripts).
+  - Release: RL2 for aarch64, RL3, RL5, RL9, RL10, the reproducibility check on the final tree (x86_64 passed on an
+    earlier tree), BR9; D27 the third-party source archive (`scripts/third-party-sources.json` has no verified
+    upstream commits; releases here used `--no-third-party-source`); D12 image recompression (no oxipng).
+  - Hardening: CF3 session-cookie eviction (above); CF5–CF9 in real browsers; the cookie-flood suite through the real
+    Caddy; RB16 slow readers of maximal sync pages; AU5 runtime versions and AU6 govulncheck; gluetun's control
+    key from an auth-config file; `compose.test.yml` without the target fixture and HolyWisp's allow-loopback overlay;
+    the full SD1 workload (Wisp splice, Argon2, sync) and systemd 252's `verify`.
+  - Deviations from WAVE-D to confirm: a bad sync cursor answers 400 (plan: 422); a quota-stopped kind is retried
+    after any local change (plan: after a deletion); untrusted heads of 64–128 KiB now get 431 (hyper accepted them).
+  - Docs not updated in this pass: ARCHITECTURE §4.1–§4.6 and §9 row by row (§8 is rewritten), the HolyWisp and VPN
+    READMEs' stack topology, About's limitation texts (CF3's session-cookie eviction is not listed there yet).
 - **Blocker rows over the epoxy transport (not the default; Wave B step 3 gate, 2026-11-23):** with
   `E2E_BLOCKER_TRANSPORT=epoxy`, these `blocker-network` rows fail on every run: N11 (the allowlisted page never
   reports), N14 (a blocked `fetch()` and XHR never settle) and N15 in both engines, and N13b and N16 under Ultraviolet.
@@ -561,3 +631,8 @@ Each item needs an owner lane in `docs/WAVE-B.md`. Full reports: `~/.claude/proj
 | 2026-11-23 | **Wave C as built (games).** D2/D4: every game is framed through `/play-frame/<slug>` (no script, `frame-src` = exactly that game's embed origin); the shell keeps `frame-src blob: <proxy origin>` (step 3's `blob:` stays) and gets `frame-ancestors 'none'` + `X-Frame-Options: DENY`. D3: COOP `same-origin` and the deny-list `Permissions-Policy` on app HTML only. D5/D6: five reviewed OSS entries enabled (2048, javascript-racer, javascript-breakout, bullethell isolated, clumsy-bird); a-dark-room, hextris, hexgl disabled by review (hexgl: CC BY-NC headers beside its MIT LICENSE, the safer reading), particle-clicker, javascript-chess, a-blast disabled for CDN code; `/oss` and `/play-frame` are reserved prefixes (JSON 404, never the SPA); OSS documents get `connect-src 'self'` without `blob:`. D21: `Module::prepare` before jobs and listeners. The `catalog` CLI needs the server's binds (`oss` counts as disabled without a proxy origin) | Lane reports c-backend, c-frontend, c-wire; WAVE-C §1 |
 | 2026-11-23 | **Wave C as built (VPN).** D23: `w2.<exp_s>.<iat_s>.<route>.<session_ref>.<mac>`, `w1` refused, 401 `wisp_ticket_wrong_route` / `_stale` / `_superseded`, the 15 s re-check closes superseded default-route connections; a mint batch never mixes routes. D15: no check service by default (`verify_url: null`); "Check this browser's exit" is shown only when a check service is set. D17: Automatic pinned per app page. `registerFeature('vpn')` is the last step of `startVpn()` and `registerFeature('games')` of the games start, before every V/U/P row was written (the unwritten rows are in Deferred items) | c-wire report; the rows that exist pass in both browsers |
 | 2026-11-23 | **Wave C plan conflicts settled by the integration step.** (1) §10's Games text "playing tells the network this server's address": the README says both facts — the network and its advertisers see the visitor's IP address (D24; embeds are never proxied), and the frames send the server's origin as the referrer (`strict-origin-when-cross-origin`); the Settings text keeps c-wire's "your IP address". (2) B18 vs §4.6: the first `catalog.import` tick scans the local `oss` source even with `GNOME_CATALOG_REFRESH_HOURS=0`; B18 asserts only that no feed ran and nothing was fetched. (3) `backend/tests/holywisp_e2e.rs`'s ignored profile-path test still minted a direct-route ticket (a wrong row since D23): fixed to mint for the profile route and a fresh direct ticket after it | WAVE-C §10, §4.6, §8.1 |
+| 2026-11-24 | **Wave D D10 settled: minify only, no obfuscation step.** GNOME's own code is AGPL-3.0-only (root `LICENSE`) and only minified; third-party code is never touched | The user asked for a quick, easy finish (2026-11-24); the default of the 2026-11-19 row applies |
+| 2026-11-24 | **Wave D as built (hardening, d-harden).** M1: 7 new variables and `_FILE` twins for the three secrets (absolute path, ≤ 64 KiB, never logged). M2 (`limits.rs`): connection cap 4096 lowered to `(RLIMIT_NOFILE − 512) / 6`, never below 16; per-peer cap at accept; in-flight cap with IPv6 /56 and /48 tiers; exact head caps (64 KiB; 1 MiB from trusted proxies on the app listener and loopback on the proxy listener) within a 64 MiB budget; Wisp `429 server_full` at 90 % of the cap; `__Host-` cookies when every origin is https; `Priority=High` on session cookies. M3: migration 0002 (byte columns, `sync_totals`, triggers), `413 quota_exceeded` with `scope`, history trimmed, `GET /api/sync/usage`, bookmark paging, 1 MiB pages, two pulls per account, a 64 MiB answer budget. Deviations: bad cursor = 400 (plan 422); a quota-stopped kind retries after any local change; `Origin-Agent-Cluster` not adopted (CF7 not run) | WAVE-D §6, d-harden report |
+| 2026-11-24 | **Wave D as built (pipeline, release, deployment, d-ship).** `postbuild.mjs` (brotli 11 / gzip 9 siblings when ≥ 10 % smaller, vendor `.map` dropped in releases, manifests, notices, budgets); `scripts/release.sh` builds in pinned Docker images with tonistiigi/xx (no binfmt), reproducibility with the default builder and `--no-cache` (a docker-container builder would run privileged BuildKit); the image is FROM scratch, user 65532; compose publishes only Caddy; Caddy logs no client addresses in any mode; `@resources` stays in the unit's syscall filter until the full trace runs; the ACME e-mail is set per site | WAVE-D §4–§5, d-ship report |
+| 2026-11-24 | **Wave D integration (d-final, lean).** Change requests applied: `url` 2.5.9 (RUSTSEC-2026-0592; `form_urlencoded` 1.2.3 came with it), `publish = false` in the three crates, `proxy.cookieHygiene` and `quota_exceeded` in `lib/api.ts`. `release.sh` now lists the image archives in the signed `SHA256SUMS` (they were covered only by manifest digests in `BUILDINFO-images.txt`). `bench/` ports can move with `BENCH_PORT_BASE`. The quotable benchmark run, the record run, the allocator check (D6) and the d1b loop were skipped (no quiet window: the machine was in use; the user asked for a quick finish). The deploy suites stay unwritten; a shell smoke of the compose stack stands in | WAVE-D §10, user request 2026-11-24 |
+| 2026-11-24 | **wisp-js baseline is LGPL-3.0-or-later** (the plan expected AGPL); benchmark-only, never shipped | d-bench report |

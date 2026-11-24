@@ -88,7 +88,11 @@ async fn concurrent_writers_never_see_database_is_locked() {
 
                     for path in ["/api/sync/bookmarks?since=0", "/api/sync/history?limit=50", "/api/auth/me"] {
                         let res = send_to(&router, with_cookie(get(path), &cookie), peer).await;
-                        assert_eq!(res.status, StatusCode::OK, "{path}: {}", res.text());
+                        // WAVE-D D22: an account runs at most 2 sync pulls at once; a third gets the documented 503.
+                        let busy = path.starts_with("/api/sync/")
+                            && res.status == StatusCode::SERVICE_UNAVAILABLE
+                            && res.header("retry-after") == Some("1");
+                        assert!(res.status == StatusCode::OK || busy, "{path}: {}", res.text());
                     }
                 }
                 (u, synced)

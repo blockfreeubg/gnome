@@ -4,7 +4,7 @@
  * importScripts). Same `define`s as the app/engine-host build, so both carry the same `__GNOME_BUILD__`.
  */
 import { defineConfig } from 'vite';
-import { distDir, gnomeDefines } from './vite.config.ts';
+import { chunkGraph, distDir, gnomeDefines } from './vite.config.ts';
 
 export default defineConfig(({ command }) => {
   if (command === 'build' && !process.env.GNOME_BUILD_ID) {
@@ -13,6 +13,8 @@ export default defineConfig(({ command }) => {
   return {
     configFile: false,
     publicDir: false,
+    // sw.js's modules for the third-party notices and bundle-report (WAVE-D §4.6).
+    plugins: [chunkGraph('.vite/gnome-sw-chunks.json')],
     define: gnomeDefines(),
     build: {
       outDir: distDir(),

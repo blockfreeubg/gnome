@@ -1,0 +1,19 @@
+# gnome-bench: the benchmark load generator (docs/WAVE-D.md §3.1, D3). A measuring tool, never part of a release,
+# an image or dist/; its own Cargo workspace so the product's lock file and crate list do not change.
+[package]
+name = "gnome-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+
+[workspace]
+
+[dependencies]
+libc = "0.2.191"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+socket2 = { version = "0.6.5", features = ["all"] }
+
+[profile.release]
+debug = 1

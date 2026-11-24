@@ -53,11 +53,29 @@ const fn secret(name: &'static str, help: &'static str) -> VarSpec {
     VarSpec { name, default: "", secret: true, empty_allowed: false, help, inactive: None }
 }
 
+/// Built-in default of `GNOME_SOURCE_URL`: release builds set `GNOME_DEFAULT_SOURCE_URL` at compile time to the
+/// release's source archives (WAVE-D D27); local builds leave it empty.
+pub const DEFAULT_SOURCE_URL: &str = match option_env!("GNOME_DEFAULT_SOURCE_URL") {
+    Some(url) => url,
+    None => "",
+};
+
+/// The secrets that may also come from a file (`<NAME>_FILE`, WAVE-D D23).
+pub const SECRET_FILES: [(&str, &str); 3] = [
+    ("GNOME_SECRET_KEY", "GNOME_SECRET_KEY_FILE"),
+    ("GNOME_ADMIN_TOKEN", "GNOME_ADMIN_TOKEN_FILE"),
+    ("GNOME_ACCESS_CODE", "GNOME_ACCESS_CODE_FILE"),
+];
+
+/// Largest secret file read (`_FILE` variables).
+pub const SECRET_FILE_MAX: u64 = 64 * 1024;
+
 /// Every setting the server understands, in documentation order.
 pub const VARS: &[VarSpec] = &[
     var("GNOME_BIND", "0.0.0.0:8080", "public listener address"),
     var_empty_ok("GNOME_ADMIN_BIND", "127.0.0.1:9091", "admin listener address; empty disables it"),
     secret("GNOME_ADMIN_TOKEN", "bearer token required by the admin listener (>= 16 chars)"),
+    var("GNOME_ADMIN_TOKEN_FILE", "", "file holding GNOME_ADMIN_TOKEN (absolute path; e.g. a systemd credential)"),
     var("GNOME_ADMIN_ALLOW_REMOTE", "false", "allow a non-loopback GNOME_ADMIN_BIND (also requires GNOME_ADMIN_TOKEN)"),
     var("GNOME_DATA_DIR", "./data", "SQLite database, secret key, filter lists, caches"),
     var("GNOME_STATIC_DIR", "./frontend/dist", "built SPA served on the public listener"),
@@ -83,9 +101,11 @@ pub const VARS: &[VarSpec] = &[
     var_empty_ok("GNOME_TRUSTED_PROXIES", "127.0.0.1/32,::1/128", "CIDRs whose X-Forwarded-* headers are trusted"),
     var("GNOME_ACCESS_MODE", "open", "who may use the proxy: open | code | accounts"),
     secret("GNOME_ACCESS_CODE", "access code required in code mode (>= 4 chars)"),
+    var("GNOME_ACCESS_CODE_FILE", "", "file holding GNOME_ACCESS_CODE (absolute path)"),
     var("GNOME_ACCOUNTS", "true", "enable user accounts and sync (/api/auth/*, /api/sync/*)"),
     var("GNOME_REGISTRATION", "open", "self-service registration: open | closed"),
     secret("GNOME_SECRET_KEY", "base64 key (>= 32 bytes); generated into $GNOME_DATA_DIR/secret.key when unset"),
+    var("GNOME_SECRET_KEY_FILE", "", "file holding GNOME_SECRET_KEY's base64 text (absolute path)"),
     var(
         "GNOME_COOKIE_SECURE",
         "auto",
@@ -113,7 +133,11 @@ pub const VARS: &[VarSpec] = &[
         "false",
         "true = your VPN egress's terms allow every person who can use this instance (silences the terms warning)",
     ),
-    var("GNOME_SOURCE_URL", "", "link to the corresponding source code (AGPL-3.0 section 13), shown in About"),
+    var(
+        "GNOME_SOURCE_URL",
+        DEFAULT_SOURCE_URL,
+        "link to the corresponding source code (AGPL-3.0 section 13), shown in About",
+    ),
     var("GNOME_ENGINES", "scramjet,ultraviolet", "enabled proxy engines"),
     var("GNOME_ENGINE_DEFAULT", "scramjet", "default proxy engine (must be enabled)"),
     var("GNOME_CATALOG_REFRESH_HOURS", "24", "hours between game catalog imports of each source; 0 = only on request"),
@@ -157,6 +181,25 @@ pub const VARS: &[VarSpec] = &[
     var("GNOME_FILTER_LISTS_FILE", "", "TOML file that adds, overrides or disables filter lists"),
     var("GNOME_THUMB_PROXY", "true", "serve game thumbnails through /api/thumb/:id"),
     var("GNOME_THUMB_CACHE_MB", "256", "disk cap for the thumbnail cache in MiB; 0 = no disk cache"),
+    var(
+        "GNOME_MAX_CONNECTIONS",
+        "4096",
+        "connections on the public and proxy listeners together (16-1000000; lowered to (RLIMIT_NOFILE - 512) / 6)",
+    ),
+    var("GNOME_MAX_CONNS_PER_IP", "256", "connections per peer IP (IPv6: per /64) outside GNOME_TRUSTED_PROXIES"),
+    var(
+        "GNOME_MAX_INFLIGHT_PER_IP",
+        "256",
+        "concurrent requests per client (IPv6: per /64, 4x per /56, 16x per /48); beyond: 503",
+    ),
+    var("GNOME_MAX_INFLIGHT_HEAD_MB", "64", "byte budget in MiB for request heads over 64 KiB (4-1024)"),
+    var("GNOME_SYNC_QUOTA_MB", "64", "sync storage per account in MiB (1-4096)"),
+    var("GNOME_SYNC_TOTAL_MB", "1024", "sync storage of all accounts together in MiB (16-1048576)"),
+    var(
+        "GNOME_COOKIE_HYGIENE",
+        "app",
+        "which foreign cookies the app removes in two-origin mode: app (below the registrable domain) | registrable",
+    ),
     var("GNOME_MAX_WS_PER_IP", "32", "concurrent Wisp connections per client IP (IPv6: per /64)"),
     var("GNOME_MAX_WS_PER_SESSION", "16", "concurrent Wisp connections per session"),
     var("GNOME_RATE_LIMIT_SCALE", "1.0", "multiplies every rate limit; 0 disables rate limiting"),
@@ -348,6 +391,32 @@ pub struct Setting {
     pub inactive: Option<&'static str>,
 }
 
+/// `GNOME_COOKIE_HYGIENE` (`/api/config` `proxy.cookieHygiene`, WAVE-D D19 (3)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CookieHygiene {
+    /// Remove foreign cookies host-only and at the domain levels below the registrable domain.
+    App,
+    /// Also at the registrable domain (the operator's opt-in).
+    Registrable,
+}
+
+impl CookieHygiene {
+    fn parse(v: &str) -> Result<Self, String> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "app" => Ok(Self::App),
+            "registrable" => Ok(Self::Registrable),
+            _ => Err("expected app or registrable".into()),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::Registrable => "registrable",
+        }
+    }
+}
+
 /// `GNOME_OSS_FETCH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OssFetch {
@@ -446,6 +515,16 @@ pub struct Config {
     pub vpn_egress_shared_ok: bool,
     pub max_ws_per_ip: u32,
     pub max_ws_per_session: u32,
+    /// `GNOME_MAX_CONNECTIONS` as configured (the effective cap may be lower, [`crate::limits`]).
+    pub max_connections: u32,
+    pub max_conns_per_ip: u32,
+    pub max_inflight_per_ip: u32,
+    pub max_inflight_head_mb: u32,
+    pub sync_quota_mb: u32,
+    pub sync_total_mb: u32,
+    pub cookie_hygiene: CookieHygiene,
+    /// Secrets read from `<NAME>_FILE` (variable name → path), for `config check`.
+    pub secret_files: BTreeMap<&'static str, PathBuf>,
     /// 0 disables rate limiting.
     pub rate_limit_scale: f64,
     pub argon2_memory_kib: u32,
@@ -548,6 +627,7 @@ impl Config {
         }
 
         let mut p = Parser { raw, problems, warnings: Vec::new() };
+        let secret_files = p.resolve_secret_files();
 
         let bind = p.parse("GNOME_BIND", parse_socket_addr);
         let admin_bind = p
@@ -591,7 +671,13 @@ impl Config {
         let cookie_secure = p.parse("GNOME_COOKIE_SECURE", CookieSecure::parse);
         let wisp_upstream = p.parse("GNOME_WISP_UPSTREAM", UpstreamAddr::parse);
         let vpn_profiles = p.parse_opt("GNOME_VPN_PROFILES", parse_path);
-        let source_url = p.parse_opt("GNOME_SOURCE_URL", parse_http_url);
+        let source_url = p.parse_opt("GNOME_SOURCE_URL", parse_http_url).or_else(|| {
+            (!DEFAULT_SOURCE_URL.is_empty()).then(|| {
+                parse_http_url(DEFAULT_SOURCE_URL).unwrap_or_else(|e| {
+                    panic!("built-in GNOME_DEFAULT_SOURCE_URL ({DEFAULT_SOURCE_URL:?}) is invalid: {e}")
+                })
+            })
+        });
         let enabled_engines = p.parse("GNOME_ENGINES", parse_engines);
         let engine_default = p.parse("GNOME_ENGINE_DEFAULT", EngineId::parse);
         let catalog_refresh_hours = p.parse("GNOME_CATALOG_REFRESH_HOURS", |v| parse_u32_in(v, 0, 8760));
@@ -609,6 +695,16 @@ impl Config {
         let vpn_egress_shared_ok = p.parse("GNOME_VPN_EGRESS_SHARED_OK", parse_bool);
         let max_ws_per_ip = p.parse("GNOME_MAX_WS_PER_IP", |v| parse_u32_in(v, 1, 100_000));
         let max_ws_per_session = p.parse("GNOME_MAX_WS_PER_SESSION", |v| parse_u32_in(v, 1, 100_000));
+        let max_connections = p.parse("GNOME_MAX_CONNECTIONS", |v| parse_u32_in(v, 16, 1_000_000));
+        let per_ip_set = p.user_value("GNOME_MAX_CONNS_PER_IP").is_some();
+        let max_conns_per_ip = p.parse("GNOME_MAX_CONNS_PER_IP", |v| parse_u32_in(v, 1, 65_536));
+        // The default follows a smaller GNOME_MAX_CONNECTIONS; an explicit larger value is a mistake.
+        let max_conns_per_ip = if per_ip_set { max_conns_per_ip } else { max_conns_per_ip.min(max_connections) };
+        let max_inflight_per_ip = p.parse("GNOME_MAX_INFLIGHT_PER_IP", |v| parse_u32_in(v, 1, 65_536));
+        let max_inflight_head_mb = p.parse("GNOME_MAX_INFLIGHT_HEAD_MB", |v| parse_u32_in(v, 4, 1024));
+        let sync_quota_mb = p.parse("GNOME_SYNC_QUOTA_MB", |v| parse_u32_in(v, 1, 4096));
+        let sync_total_mb = p.parse("GNOME_SYNC_TOTAL_MB", |v| parse_u32_in(v, 16, 1_048_576));
+        let cookie_hygiene = p.parse("GNOME_COOKIE_HYGIENE", CookieHygiene::parse);
         let rate_limit_scale = p.parse("GNOME_RATE_LIMIT_SCALE", parse_scale);
         let argon2_memory_kib = p.parse("GNOME_ARGON2_MEMORY_KIB", |v| parse_u32_in(v, 1024, 1_048_576));
         let workers = p.parse_opt("GNOME_WORKERS", |v| parse_u32_in(v, 1, 1024).map(|n| n as usize));
@@ -621,6 +717,51 @@ impl Config {
         let hsts = p.parse("GNOME_HSTS", parse_bool);
 
         // Cross-field rules.
+        if max_conns_per_ip > max_connections && !p.failed("GNOME_MAX_CONNECTIONS") {
+            p.problems.push(format!(
+                "GNOME_MAX_CONNS_PER_IP={max_conns_per_ip} is larger than GNOME_MAX_CONNECTIONS={max_connections}"
+            ));
+        }
+        if sync_total_mb < sync_quota_mb && !p.failed("GNOME_SYNC_QUOTA_MB") {
+            p.problems.push(format!(
+                "GNOME_SYNC_TOTAL_MB={sync_total_mb} is smaller than GNOME_SYNC_QUOTA_MB={sync_quota_mb}"
+            ));
+        }
+        let public_bind = |a: &SocketAddr| !a.ip().is_loopback();
+        if source_url.is_none() && (public_bind(&bind) || proxy_bind.as_ref().is_some_and(public_bind)) {
+            p.warnings.push(
+                "GNOME_SOURCE_URL is empty while a listener is not on loopback: AGPL-3.0 section 13 asks you to offer \
+                 the corresponding source to every user of this server (set it to your source archive or repository)"
+                    .into(),
+            );
+        }
+        if accounts && registration == Registration::Open {
+            p.warnings.push(
+                "GNOME_REGISTRATION=open: anyone who reaches this server can create accounts and use sync storage \
+                 (GNOME_SYNC_QUOTA_MB each, GNOME_SYNC_TOTAL_MB together); set GNOME_REGISTRATION=closed once your \
+                 accounts exist"
+                    .into(),
+            );
+        }
+        let https_origin = public_origins.iter().chain(proxy_origin.iter()).any(|o| o.starts_with("https://"));
+        if https_origin && !hsts {
+            p.warnings.push(
+                "https:// origins with GNOME_HSTS=false: browsers may still try plain HTTP first; set GNOME_HSTS=true \
+                 once HTTPS works for every hostname"
+                    .into(),
+            );
+        }
+        if env("INVOCATION_ID").is_some_and(|v| !v.is_empty()) {
+            for (name, file_var) in SECRET_FILES {
+                if p.raw.get(name).is_some_and(|(_, prov)| *prov == Provenance::Env) && !secret_files.contains_key(name)
+                {
+                    p.warnings.push(format!(
+                        "{name} is set as a plain variable under systemd: it shows in the unit's environment; use \
+                         {file_var} with LoadCredential= instead"
+                    ));
+                }
+            }
+        }
         if access_mode == AccessMode::Code && access_code.is_none() && !p.failed("GNOME_ACCESS_CODE") {
             p.problems.push("GNOME_ACCESS_MODE=code requires GNOME_ACCESS_CODE".into());
         }
@@ -817,7 +958,11 @@ impl Config {
                     Some((v, prov)) => (v.trim().to_string(), *prov),
                     None => (spec.default.to_string(), Provenance::Default),
                 };
-                let value = if spec.secret && !value.is_empty() { "<redacted>".to_string() } else { value };
+                let value = match secret_files.get(spec.name) {
+                    Some(path) => format!("<redacted> (from file {})", path.display()),
+                    None if spec.secret && !value.is_empty() => "<redacted>".to_string(),
+                    None => value,
+                };
                 Setting { name: spec.name, value, provenance, inactive: spec.inactive }
             })
             .collect();
@@ -866,6 +1011,14 @@ impl Config {
             vpn_egress_shared_ok,
             max_ws_per_ip,
             max_ws_per_session,
+            max_connections,
+            max_conns_per_ip,
+            max_inflight_per_ip,
+            max_inflight_head_mb,
+            sync_quota_mb,
+            sync_total_mb,
+            cookie_hygiene,
+            secret_files,
             rate_limit_scale,
             argon2_memory_kib,
             workers,
@@ -891,6 +1044,12 @@ impl Config {
         self.data_dir.join("secret.key")
     }
 
+    /// `GNOME_PUBLIC_ORIGINS` is set and every configured origin (with `GNOME_PROXY_ORIGIN`) is `https://`.
+    pub fn all_origins_https(&self) -> bool {
+        !self.public_origins.is_empty()
+            && self.public_origins.iter().chain(self.proxy_origin.iter()).all(|o| o.starts_with("https://"))
+    }
+
     /// Whether `/api/auth/register` accepts new accounts.
     pub fn registration_open(&self) -> bool {
         self.accounts && self.registration == Registration::Open
@@ -904,6 +1063,34 @@ struct Parser {
 }
 
 impl Parser {
+    /// Read every `<NAME>_FILE` secret into `raw` as `<NAME>`'s value (WAVE-D D23). Returns name → path.
+    fn resolve_secret_files(&mut self) -> BTreeMap<&'static str, PathBuf> {
+        let mut out = BTreeMap::new();
+        for (name, file_var) in SECRET_FILES {
+            let Some(path) = self.user_value(file_var) else { continue };
+            let path = path.trim().to_string();
+            if self.user_value(name).is_some() {
+                self.problems.push(format!("{name} and {file_var} are both set; set only one of them"));
+                continue;
+            }
+            match read_secret_file(Path::new(&path)) {
+                Ok((value, others_can_read)) => {
+                    if others_can_read {
+                        self.warnings.push(format!(
+                            "{file_var}={path}: other users can read this file; make it readable by the owner (and \
+                             group) only, e.g. chmod 0640"
+                        ));
+                    }
+                    let prov = self.raw.get(file_var).map_or(Provenance::Env, |(_, prov)| *prov);
+                    self.raw.insert(name, (value, prov));
+                    out.insert(name, PathBuf::from(path));
+                }
+                Err(e) => self.problems.push(format!("{file_var}={path:?}: {e}")),
+            }
+        }
+        out
+    }
+
     /// The user-supplied value, if any (empty counts as unset unless the variable gives empty a meaning).
     fn user_value(&self, name: &'static str) -> Option<String> {
         let spec = spec(name);
@@ -975,6 +1162,52 @@ pub(crate) fn parse_bool(v: &str) -> Result<bool, String> {
         "0" | "false" | "no" | "off" => Ok(false),
         _ => Err("expected a boolean (true/false)".into()),
     }
+}
+
+/// Read a `_FILE` secret: an absolute path to a regular file of at most [`SECRET_FILE_MAX`] bytes of UTF-8, with
+/// exactly one trailing `\n` or `\r\n` removed. Returns the value and whether others (mode bit `0o004`) may read it.
+pub fn read_secret_file(path: &Path) -> Result<(String, bool), String> {
+    use std::io::Read as _;
+    if !path.is_absolute() {
+        return Err("must be an absolute path".into());
+    }
+    let file = std::fs::File::open(path).map_err(|e| {
+        let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
+            " (the server's user or group must be able to read it; deployment/init-secrets.sh sets this up)"
+        } else {
+            ""
+        };
+        format!("cannot open: {e}{hint}")
+    })?;
+    let meta = file.metadata().map_err(|e| format!("cannot stat: {e}"))?;
+    if !meta.is_file() {
+        return Err("is not a regular file".into());
+    }
+    if meta.len() > SECRET_FILE_MAX {
+        return Err(format!("is larger than {} KiB", SECRET_FILE_MAX / 1024));
+    }
+    let mut bytes = Vec::new();
+    file.take(SECRET_FILE_MAX + 1).read_to_end(&mut bytes).map_err(|e| format!("cannot read: {e}"))?;
+    if bytes.len() as u64 > SECRET_FILE_MAX {
+        return Err(format!("is larger than {} KiB", SECRET_FILE_MAX / 1024));
+    }
+    let mut text = String::from_utf8(bytes).map_err(|_| "is not UTF-8 text".to_string())?;
+    if text.ends_with("\r\n") {
+        text.truncate(text.len() - 2);
+    } else if text.ends_with('\n') {
+        text.truncate(text.len() - 1);
+    }
+    if text.trim().is_empty() {
+        return Err("is empty".into());
+    }
+    #[cfg(unix)]
+    let others = {
+        use std::os::unix::fs::PermissionsExt as _;
+        meta.permissions().mode() & 0o004 != 0
+    };
+    #[cfg(not(unix))]
+    let others = false;
+    Ok((text, others))
 }
 
 fn parse_socket_addr(v: &str) -> Result<SocketAddr, String> {
@@ -1323,6 +1556,8 @@ mod tests {
             ("GNOME_ACCESS_MODE", "code"),
             ("GNOME_ACCESS_CODE", "mushroom-forest-42"),
             ("GNOME_CATALOG_SOURCES", "gamepix"),
+            ("GNOME_SOURCE_URL", "https://example.com/gnome-src.tar.gz"),
+            ("GNOME_REGISTRATION", "closed"),
         ])
         .unwrap();
         assert!(long.warnings.is_empty(), "{:?}", long.warnings);

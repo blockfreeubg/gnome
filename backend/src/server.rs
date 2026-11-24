@@ -29,6 +29,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt as _;
 
+use crate::limits::{Admission, ConnHold};
 use crate::router;
 use crate::state::{AppState, StartupError};
 
@@ -36,9 +37,13 @@ use crate::state::{AppState, StartupError};
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 /// Time a client has to send a complete request head (also bounds idle keep-alive connections).
 pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(20);
-/// Per-connection read buffer cap. hyper may read one more chunk before it checks, so request heads beyond about
-/// twice this size are refused with `431`.
-const MAX_BUF: usize = 64 * 1024;
+/// Per-connection read buffer caps ([`crate::limits::max_head_for`]). hyper may read one more chunk before it checks,
+/// so request heads beyond about twice the cap are refused with `431`.
+const MAX_BUF: usize = crate::limits::SMALL_HEAD;
+const MAX_BUF_LARGE: usize = crate::limits::LARGE_HEAD;
+/// How long an overflow answer waits for the client's request bytes before the socket closes (so the close does
+/// not reset the connection before the client reads the `503`).
+const OVERFLOW_LINGER: Duration = Duration::from_secs(1);
 /// How long writing a response may make no progress (the client stopped reading and its receive window stays full)
 /// before the connection is closed. Without it such a client would hold a connection and its file forever.
 pub const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -441,8 +446,9 @@ pub mod fd_limit {
     }
 }
 
+/// The three listeners.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Listener {
+pub enum Listener {
     Public,
     Proxy,
     Admin,
@@ -555,8 +561,12 @@ pub async fn serve_all(state: AppState, listeners: Listeners, shutdown: impl Fut
 }
 
 async fn accept_loop(listener: TcpListener, router: Router, state: AppState, conns: TaskTracker, kind: Listener) {
-    let mut http = hyper::server::conn::http1::Builder::new();
-    http.timer(TokioTimer::new()).header_read_timeout(HEADER_READ_TIMEOUT).keep_alive(true).max_buf_size(MAX_BUF);
+    let builder = |max_buf: usize| {
+        let mut http = hyper::server::conn::http1::Builder::new();
+        http.timer(TokioTimer::new()).header_read_timeout(HEADER_READ_TIMEOUT).keep_alive(true).max_buf_size(max_buf);
+        http
+    };
+    let (small, large) = (builder(MAX_BUF), builder(MAX_BUF_LARGE));
     let token = state.shutdown.clone();
     let mut failures = AcceptFailures::default();
     loop {
@@ -576,17 +586,32 @@ async fn accept_loop(listener: TcpListener, router: Router, state: AppState, con
                 }
             },
         };
+        let trusted = state.trusted_proxies.contains(peer.ip());
+        let slot = match state.limits.admit(kind, peer.ip(), trusted, &state.metrics).await {
+            Admission::Serve(slot) => slot,
+            Admission::Refuse => continue,
+            Admission::Overflow(answering) => {
+                conns.spawn(answer_overflow(stream, answering));
+                continue;
+            }
+        };
         let _ = stream.set_nodelay(true);
         let public = kind != Listener::Admin;
         if public {
             keepalive(&stream);
         }
         let router = router.clone();
+        let hold = ConnHold::new(slot);
+        let held = hold.clone();
+        let head_cap = crate::limits::max_head_for(kind, peer.ip(), trusted);
         let service = hyper::service::service_fn(move |mut req: http::Request<Incoming>| {
             req.extensions_mut().insert(ConnectInfo(peer));
+            req.extensions_mut().insert(held.clone());
+            req.extensions_mut().insert(crate::limits::HeadCap(head_cap));
             router.clone().oneshot(req)
         });
         let io = TokioIo::new(ConnIo::new(stream, WRITE_STALL_TIMEOUT));
+        let http = if head_cap == MAX_BUF_LARGE { &large } else { &small };
         let conn = http.serve_connection(io, service).with_upgrades();
         let token = token.clone();
         let state = state.clone();
@@ -608,8 +633,33 @@ async fn accept_loop(listener: TcpListener, router: Router, state: AppState, con
             if public {
                 state.metrics.connection_closed();
             }
+            // An upgrade handler may have taken the slot into the upgraded connection's task.
+            drop(hold);
         });
     }
+}
+
+/// Answer a connection over the cap with the hardened `503` ([`crate::limits::OVERFLOW_ANSWER`]), then read what
+/// the client sent for up to [`OVERFLOW_LINGER`] (so closing does not reset the answer away) and close.
+async fn answer_overflow(mut stream: TcpStream, slot: tokio::sync::OwnedSemaphorePermit) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let _slot = slot;
+    let answer = crate::limits::OVERFLOW_ANSWER.as_bytes();
+    if tokio::time::timeout(OVERFLOW_LINGER, stream.write_all(answer)).await.is_err() {
+        return;
+    }
+    let _ = stream.shutdown().await;
+    let mut sink = [0u8; 4096];
+    let _ = tokio::time::timeout(OVERFLOW_LINGER, async {
+        let mut total = 0usize;
+        while total < 256 * 1024 {
+            match stream.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => total += n,
+            }
+        }
+    })
+    .await;
 }
 
 /// Pause after a failed `accept()`.

@@ -14,7 +14,7 @@ stated. This document is the contract between the frontend and the backend — c
 - Errors: HTTP status + body `{"error": {"code": "snake_case_code", "message": "Human readable", "retry_after_s"?: n}}`.
   Codes: `bad_request` (400; also malformed JSON or a missing `Content-Type: application/json`), `validation_failed`
   (422, + `fields: {name: msg}`), `unauthorized` (401), `forbidden` (403), `not_found` (404), `method_not_allowed`
-  (405, + `Allow`), `conflict` (409), `payload_too_large` (413), `rate_limited` (429 + `Retry-After`),
+  (405, + `Allow`), `conflict` (409), `payload_too_large` (413), `quota_exceeded` (413, + `scope`; see "Usage, quotas and paging"), `rate_limited` (429 + `Retry-After`),
   `access_code_required` (401), `login_required` (401), `internal` (500), `timeout` (503: no response within 30 s),
   `unavailable` (503 + `Retry-After`: the filter lists are not ready yet, see "Content-blocking filter lists"; on the
   Wisp gateway: shutting down).
@@ -193,6 +193,36 @@ clock even when `since` is larger (a cursor from the future, e.g. after a server
 - `POST /api/sync/history` body `{"items": HistoryEntry[]}` (≤ 5000) → `{"applied": n}` (new ids inserted, changed
   ones updated; entries visited before `cleared_before` are ignored; the server keeps the newest 100 000 visits).
 - `DELETE /api/sync/history` body `{"before": ms}` or `{"all": true}` → `204`
+
+### Usage, quotas and paging (Wave D)
+- `GET /api/sync/usage` → `{"used_bytes", "quota_bytes", "history_bytes", "bookmarks_bytes", "settings_bytes"}`: the
+  account's stored sync bytes (as the server counts them) against `GNOME_SYNC_QUOTA_MB`.
+- A bookmark or settings write that would grow the account past its quota answers `413 quota_exceeded` with
+  `scope: "account"` (plus `used_bytes`, `quota_bytes`); when all accounts together pass `GNOME_SYNC_TOTAL_MB`, every
+  kind answers it with `scope: "server"`. A write that does not grow the total always applies, so an account over a
+  lowered quota can shrink. A history upload over the quota is applied and the oldest visits are trimmed. The history upload
+  answer is `{"applied": n, "trimmed": n}` (`trimmed` 0 when nothing was trimmed).
+- `GET /api/sync/bookmarks` also takes `limit` (1–1000) and `cursor`, and answers `next_cursor` (`null` on the last
+  page). Every page of either pull route stops at 1 MiB of JSON. A bookmark pull without `limit` returns whole change
+  groups up to 1 MiB with `server_time` at the last one, so an older client fetches the rest with `since=`. An invalid
+  cursor answers `400 bad_request` ("invalid cursor").
+- An account runs at most two pulls at once; a third, or a pull when the server's 64 MiB budget for large answers is
+  used up, answers `503 unavailable` with `Retry-After: 1`.
+
+### Connection and request limits (Wave D)
+- More requests in flight from one client than `GNOME_MAX_INFLIGHT_PER_IP` (×4 for its IPv6 /56, ×16 for its /48):
+  `503 unavailable` + `Retry-After: 1` with a top-level `"tier"` (`ip`, `prefix56`, `prefix48`).
+- Request heads: 64 KiB, or 1 MiB from a trusted proxy on the app listener and from loopback on the proxy listener;
+  a larger head gets a bodiless `431` (strict CSP, `Connection: close`). Heads over 64 KiB share the
+  `GNOME_MAX_INFLIGHT_HEAD_MB` budget; when it is used up: a bodiless `503` + `Retry-After: 1`.
+- A full connection cap (`GNOME_MAX_CONNECTIONS`) gets the same bodiless `503`; connections beyond
+  `GNOME_MAX_CONNS_PER_IP` from an untrusted peer are closed at once.
+- Wisp upgrades: `429 server_full` once Wisp connections reach 90 % of the connection cap; `431` for an upgrade head
+  over 64 KiB from a non-loopback peer.
+- `GET /api/config` → `proxy.cookieHygiene`: `"app"` (default) or `"registrable"` (`GNOME_COOKIE_HYGIENE`): which
+  cookies the app clears that proxied pages planted for its hostname.
+- `/admin/diagnostics` adds `connections` (caps, active, refusals per reason), `proxy_trust` and the database's sync
+  totals.
 
 IDs are UUIDs (8-4-4-4-12 hex). URLs are validated (`http:`/`https:` only, ≤ 4096 chars); titles ≤ 512 chars; client
 timestamps must be ≥ 0 and at most 24 h in the future.

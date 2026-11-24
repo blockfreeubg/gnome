@@ -7,98 +7,65 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use super::ticket::SessionRef;
-use crate::security::client::canonical_ip;
+use crate::limits::{Tier, TierGuard, TieredCounter};
 
-/// IPv4 address, or the /64 of an IPv6 address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum IpKey {
-    V4(u32),
-    V6(u64),
-}
-
-impl IpKey {
-    fn of(ip: IpAddr) -> Self {
-        match canonical_ip(ip) {
-            IpAddr::V4(v4) => Self::V4(u32::from(v4)),
-            IpAddr::V6(v6) => Self::V6((u128::from(v6) >> 64) as u64),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct Counts {
-    by_ip: HashMap<IpKey, u32>,
-    by_session: HashMap<SessionRef, u32>,
-}
-
-/// Which cap refused a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapExceeded {
-    Ip,
+    /// The client's address (IPv6: /64), or its /56 (4×) or /48 (16×) (WAVE-D D18).
+    Ip(Tier),
     Session,
 }
 
-/// The connection caps (shared; cheap to clone).
+/// Shared per-IP and per-session counters (cheap to clone).
 #[derive(Debug, Clone)]
 pub struct Caps {
-    max_per_ip: u32,
+    by_ip: TieredCounter,
     max_per_session: u32,
-    counts: Arc<Mutex<Counts>>,
+    by_session: Arc<Mutex<HashMap<SessionRef, u32>>>,
 }
 
 impl Caps {
     pub fn new(max_per_ip: u32, max_per_session: u32) -> Self {
-        Self { max_per_ip, max_per_session, counts: Arc::default() }
+        Self { by_ip: TieredCounter::new(max_per_ip, true), max_per_session, by_session: Arc::default() }
     }
 
-    /// Take one slot for `ip` and `session`, or refuse without taking any.
+    /// Take one slot for `ip` (and its prefixes) and one for `session`, or say which cap is full.
     pub fn acquire(&self, ip: IpAddr, session: SessionRef) -> Result<CapGuard, CapExceeded> {
-        let ip = IpKey::of(ip);
-        let mut c = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        if c.by_ip.get(&ip).copied().unwrap_or(0) >= self.max_per_ip {
-            return Err(CapExceeded::Ip);
-        }
-        if c.by_session.get(&session).copied().unwrap_or(0) >= self.max_per_session {
+        let ip_slot = self.by_ip.acquire(ip).map_err(CapExceeded::Ip)?;
+        let mut c = self.by_session.lock().unwrap_or_else(|e| e.into_inner());
+        if c.get(&session).copied().unwrap_or(0) >= self.max_per_session {
             return Err(CapExceeded::Session);
         }
-        *c.by_ip.entry(ip).or_insert(0) += 1;
-        *c.by_session.entry(session).or_insert(0) += 1;
-        Ok(CapGuard { counts: self.counts.clone(), ip, session })
+        *c.entry(session).or_insert(0) += 1;
+        Ok(CapGuard { _ip: ip_slot, by_session: self.by_session.clone(), session })
     }
 
     /// Connections currently holding a slot.
     pub fn active(&self) -> u32 {
-        self.counts.lock().unwrap_or_else(|e| e.into_inner()).by_ip.values().sum()
+        self.by_ip.active()
     }
 
-    /// `(distinct client IPs, distinct sessions)` with open connections.
+    /// Distinct (client keys at every tier, sessions) holding slots.
     pub fn holders(&self) -> (usize, usize) {
-        let c = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        (c.by_ip.len(), c.by_session.len())
+        (self.by_ip.holders(), self.by_session.lock().unwrap_or_else(|e| e.into_inner()).len())
     }
 }
 
-/// One held slot; dropping it releases the slot (and forgets keys that reach zero, so the maps stay small).
+/// One connection's slots; dropping it releases them.
 #[derive(Debug)]
 pub struct CapGuard {
-    counts: Arc<Mutex<Counts>>,
-    ip: IpKey,
+    _ip: TierGuard,
+    by_session: Arc<Mutex<HashMap<SessionRef, u32>>>,
     session: SessionRef,
 }
 
 impl Drop for CapGuard {
     fn drop(&mut self) {
-        let mut c = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(n) = c.by_ip.get_mut(&self.ip) {
+        let mut c = self.by_session.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = c.get_mut(&self.session) {
             *n -= 1;
             if *n == 0 {
-                c.by_ip.remove(&self.ip);
-            }
-        }
-        if let Some(n) = c.by_session.get_mut(&self.session) {
-            *n -= 1;
-            if *n == 0 {
-                c.by_session.remove(&self.session);
+                c.remove(&self.session);
             }
         }
     }
@@ -120,7 +87,7 @@ mod tests {
         let g2 = caps.acquire(ip("192.0.2.1"), a).unwrap();
         assert_eq!(caps.acquire(ip("192.0.2.9"), a).unwrap_err(), CapExceeded::Session, "2 per session, any IP");
         let g3 = caps.acquire(ip("192.0.2.1"), b).unwrap();
-        assert_eq!(caps.acquire(ip("192.0.2.1"), SessionRef([3; 16])).unwrap_err(), CapExceeded::Ip);
+        assert_eq!(caps.acquire(ip("192.0.2.1"), SessionRef([3; 16])).unwrap_err(), CapExceeded::Ip(Tier::Ip));
         assert_eq!(caps.active(), 3);
         drop(g1);
         assert!(caps.acquire(ip("192.0.2.1"), b).is_ok(), "a released slot is reusable (guard dropped at once)");
@@ -142,10 +109,26 @@ mod tests {
         let caps = Caps::new(2, 10);
         let _a = caps.acquire(ip("2001:db8:1:2::1"), SessionRef([1; 16])).unwrap();
         let _b = caps.acquire(ip("2001:db8:1:2::ffff"), SessionRef([2; 16])).unwrap();
-        assert_eq!(caps.acquire(ip("2001:db8:1:2:9::9"), SessionRef([3; 16])).unwrap_err(), CapExceeded::Ip);
+        assert_eq!(caps.acquire(ip("2001:db8:1:2:9::9"), SessionRef([3; 16])).unwrap_err(), CapExceeded::Ip(Tier::Ip));
         assert!(caps.acquire(ip("2001:db8:1:3::1"), SessionRef([3; 16])).is_ok());
         let _v4 = caps.acquire(ip("::ffff:192.0.2.1"), SessionRef([4; 16])).unwrap();
         let _v4b = caps.acquire(ip("192.0.2.1"), SessionRef([5; 16])).unwrap();
-        assert_eq!(caps.acquire(ip("192.0.2.1"), SessionRef([6; 16])).unwrap_err(), CapExceeded::Ip, "mapped = v4");
+        assert_eq!(
+            caps.acquire(ip("192.0.2.1"), SessionRef([6; 16])).unwrap_err(),
+            CapExceeded::Ip(Tier::Ip),
+            "mapped = v4"
+        );
+    }
+
+    #[test]
+    fn ipv6_prefix_tiers_are_named() {
+        let caps = Caps::new(1, 1000);
+        let mut held = Vec::new();
+        for n in 0..4u8 {
+            held.push(caps.acquire(ip(&format!("2001:db8:5:{n:x}::1")), SessionRef([n; 16])).unwrap());
+        }
+        let err = caps.acquire(ip("2001:db8:5:4::1"), SessionRef([9; 16])).unwrap_err();
+        assert_eq!(err, CapExceeded::Ip(Tier::Prefix56), "4 x 1 per /56");
+        assert!(caps.acquire(ip("2001:db8:5:100::1"), SessionRef([9; 16])).is_ok(), "another /56 of the /48");
     }
 }

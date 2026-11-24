@@ -69,6 +69,8 @@ void server.refresh();
 // first paint: its controller loads once the page is idle.
 initAccount();
 onIdle(() => void import('./settings/account-sync').then((m) => m.startAccountSync()));
+// Two-origin mode: expire foreign cookies a proxied page planted for the app's domain (WAVE-D D19 (3)).
+onIdle(() => void import('./lib/cookie-hygiene').then((m) => m.startCookieHygiene(server)));
 onIdle(() => void loadTldList());
 // The browser library (history, bookmarks, downloads: src/library) and the browser itself (tabs, the BrowserBridge,
 // shortcuts; src/browser). The engine iframe is created only when the browser view first needs a proxied tab.

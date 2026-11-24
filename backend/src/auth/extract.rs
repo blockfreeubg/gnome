@@ -77,10 +77,15 @@ struct ResolvedUser(Option<CurrentUser>);
 /// over HTTPS, and also over plain HTTP when the app origin the request was addressed to is a loopback one
 /// (`http://127.0.0.1:…`, `http://localhost:…`), where browsers accept `Secure` cookies too, so the two-port
 /// development setup uses the production cookie names (spike §11.3 item 4).
+///
+/// A deployment whose configured origins are all `https://` uses `Secure` cookies under `auto` whatever
+/// `X-Forwarded-Proto` says (WAVE-D §6.3), so a front missing from `GNOME_TRUSTED_PROXIES` cannot downgrade the
+/// `__Host-` names.
 pub fn cookies_secure(state: &AppState, client: &ClientInfo) -> bool {
     match state.config.cookie_secure {
         CookieSecure::Auto if !client.https => {
-            origins::app_origin(&state.config, client).is_some_and(|o| origins::loopback_http(&o))
+            state.config.all_origins_https()
+                || origins::app_origin(&state.config, client).is_some_and(|o| origins::loopback_http(&o))
         }
         mode => cookies::secure_for(mode, client),
     }

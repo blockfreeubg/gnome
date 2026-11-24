@@ -2,6 +2,9 @@
 
 # GNOME
 
+**New here? Start with [START-GUIDE.md](START-GUIDE.md)**: how to run everything on a development PC and on an
+Ubuntu 24.04 server.
+
 GNOME is a self-hostable website that has a web proxy, a browser that runs inside a browser tab, a games page and a
 VPN page. You run one Rust server, `gnome-server`, plus a small Wisp relay called HolyWisp. People open GNOME in an
 ordinary browser and browse other sites inside it. GNOME is a website only. There is no native app and no
@@ -9,7 +12,7 @@ browser-extension build. Its proxy engines are Scramjet (primary) and Ultraviole
 through HolyWisp, a Wisp server written in C. Accounts, settings sync and the admin listener are part of
 `gnome-server`. The interface is TypeScript and Svelte 5.
 
-> **Status on 2026-11-23.** GNOME is still being built.
+> **Status on 2026-11-24.** GNOME is still being built.
 > - **Built and tested:** the proxy (Scramjet with Ultraviolet fallback) and the browser (tabs, history, bookmarks,
 >   downloads, session restore, settings), with the restyled UI; the built-in extensions (ad and tracker blocking,
 >   privacy protection, the cookie manager, cosmetic filtering; Wave B step 3, 2026-11-21).
@@ -18,8 +21,13 @@ through HolyWisp, a Wisp server written in C. Accounts, settings sync and the ad
 >   Disconnect, locations, the kill switch, the server's exit check when the operator sets a check service). Each has
 >   its e2e suites in Chromium and Firefox; the final run's results and its open items are in
 >   [docs/PROGRESS.md](docs/PROGRESS.md). A real VPN tunnel has not been tested here (only a stand-in location).
-> - **Not built yet:** benchmarks, the production build pipeline and the deployment files for `gnome-server`
->   (Wave D); the final review (Wave E).
+> - **Wave D, done on 2026-11-24 (a quick, lean pass):** the production build pipeline and a reproducible,
+>   checksummed release (`scripts/release.sh`, x86_64 and aarch64), the deployment files (a FROM-scratch Docker
+>   image, a compose stack behind Caddy, a hardened systemd unit, Raspberry Pi 4 notes: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)),
+>   connection caps, request-head limits and sync storage quotas, supply-chain audits ([docs/AUDIT.md](docs/AUDIT.md))
+>   and a benchmark harness against a Node.js baseline ([docs/BENCHMARKS.md](docs/BENCHMARKS.md): short-run numbers
+>   only; the long record run and the optimization loop were skipped and are open).
+> - **Not built yet:** the final review (Wave E).
 >
 > The checklist and plan are in [docs/PROGRESS.md](docs/PROGRESS.md).
 
@@ -80,16 +88,20 @@ works, with the limits named. **Server only** = the server part works, but the i
 | Cosmetic filtering | Works (same tests) | Hides ad frames and page clutter, runs the lists' scriptlets; cookie-notice and annoyance lists are opt-in | |
 | Games catalog (server) | Works (Wave C) | Imported automatically (GamePix 30 s after start, then daily; reviewed open-source games fetched from GitHub); `gnome-server catalog import|stats|fetch-oss`; `/api/games*` | [below](#games-catalog), [crates/catalog](crates/catalog/README.md) |
 | Games page: search, categories, trending, recently added, popular, featured, favorites, recently played; game details and player | Works (Wave C; e2e in Chromium and Firefox) | `/games`, `/games/<slug>`, `/play/<slug>`. Games load directly from their publishers (never proxied); a notice comes before a network's first game. Favorites and recently played stay in this browser | [research](docs/research/games-sources.md) |
-| Production build optimisation | Partial | `npm run build` already minifies, tree-shakes and content-hashes GNOME's code and writes no source maps for it (the vendored engines are copied unmodified, with their `.map` files). Wave D adds precompressed `.br`/`.gz` files (`gnome-server` already serves them when present), image optimisation and opt-in obfuscation | [ARCHITECTURE §8](docs/ARCHITECTURE.md) |
-| Deployment files for `gnome-server` (Docker image, compose, Caddy, systemd, Raspberry Pi notes) | Not built (Wave D) | Only the HolyWisp units/Dockerfile and the VPN compose example exist | [Production notes](#production-notes) |
-| Benchmarks | Not built (Wave D) | | |
+| Production build optimisation | Works (Wave D; image recompression not done) | `npm run build:release`: minified, tree-shaken, content-hashed, precompressed (`.br`/`.gz`), no public source maps, a third-party notices file; no obfuscation (D10). `npm run release:check` verifies a release `dist/` | [DEPLOYMENT](docs/DEPLOYMENT.md) |
+| Release artifacts | Works (Wave D) | `scripts/release.sh`: static musl `gnome-server` + HolyWisp + the web app per architecture (x86_64, aarch64), a source tarball, `SHA256SUMS`, optional signature | [DEPLOYMENT](docs/DEPLOYMENT.md) |
+| Supply-chain audits | Works (Wave D) | `scripts/audit.sh` (cargo-deny, npm audit with a shipped/build-only policy, vendored wasm versions, pinned images) | [AUDIT](docs/AUDIT.md) |
+| Connection caps, head limits, sync quotas | Works (Wave D) | `GNOME_MAX_CONNECTIONS`, `GNOME_MAX_CONNS_PER_IP`, `GNOME_MAX_INFLIGHT_PER_IP`, `GNOME_MAX_INFLIGHT_HEAD_MB`, `GNOME_SYNC_QUOTA_MB`, `GNOME_SYNC_TOTAL_MB` | [backend/README.md](backend/README.md) |
+| Deployment files (Docker image, compose, Caddy, systemd, Raspberry Pi notes) | Works (Wave D; tested on this PC: the image, the compose stack with a throwaway CA, `systemd-analyze verify`/`security`; not tested: real DNS and ACME, booting the units, Pi hardware) | [START-GUIDE.md](START-GUIDE.md), `deployment/` | [DEPLOYMENT](docs/DEPLOYMENT.md) |
+| Benchmarks | Partial (Wave D: harness, Node.js and wisp-js baselines, short-run numbers only) | `node bench/run.mjs --preset quick` | [BENCHMARKS](docs/BENCHMARKS.md), [bench/](bench/README.md) |
 | Mobile layout | Works | Below 760 px wide: bottom bar (Home, Browser, Games, VPN, More), compact toolbar, tab switcher | |
 | Safari / WebKit | Not tested | Every test runs in Chromium and Firefox only | |
 
 ## Requirements
 
-- **Linux on x86_64** (tested). aarch64 (for example a Raspberry Pi 4) is a target but not tested yet: the aarch64
-  HolyWisp build has only run its tests under QEMU, and `gnome-server` has not been built for aarch64.
+- **Linux on x86_64** (tested). aarch64 (for example a Raspberry Pi 4) is a target: `scripts/release.sh` builds static
+  aarch64 binaries of `gnome-server` and HolyWisp, which have only run under QEMU user-mode here, not on arm64
+  hardware.
 - **Rust 1.89 or newer** (the declared minimum; tested with 1.99.1), plus a **C compiler** (`cc`/`gcc`/`clang`). The
   C compiler builds the bundled SQLite and `ring`. You do not need a system SQLite or OpenSSL.
 - **Node.js 22.12 or newer** with npm (tested with Node 26.13 / npm 12.2). Node is only needed to build the
@@ -97,6 +109,7 @@ works, with the limits named. **Server only** = the server part works, but the i
 - **HolyWisp binary** in `services/holywisp/build/<arch>/holywisp`. That directory is not part of the source tree:
   `services/holywisp/fetch-build.sh` builds static binaries for both architectures into it, and needs Docker with
   buildx, git and network access. See [services/holywisp/README.md](services/holywisp/README.md).
+- **Docker with buildx** only for images, releases (`scripts/release.sh`) and the compose stack; not for development.
 - **Browsers** for using GNOME: current Chromium-based browsers and Firefox (the only ones tested). The server needs
   network access to the sites people browse.
 
@@ -183,10 +196,21 @@ proxied pages). Always run it after a change.
 GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 ./target/release/gnome-server config check
 ```
 
-The full list of variables (65, plus `GNOME_CONFIG`) with defaults and ranges is in
+The full list of variables (75, plus `GNOME_CONFIG`) with defaults and ranges is in
 [backend/README.md](backend/README.md) and [docs/ARCHITECTURE.md §4.2](docs/ARCHITECTURE.md); `config check`
 prints all of them. Other CLI commands: `migrate`, `user create|reset-password`, `filters refresh|status`,
-`catalog import|stats|fetch-oss`, `version`.
+`catalog import|stats|fetch-oss`, `health` (asks the running server, exit 0 = ok), `admin get /admin/<path>` (reads the
+local admin listener with the configured token), `db backup <new file>` (a consistent snapshot, mode 0600, while the
+server runs), `version` (with the build id).
+
+**Wave D variables.** Secrets can come from files: `GNOME_ADMIN_TOKEN_FILE`, `GNOME_ACCESS_CODE_FILE`,
+`GNOME_SECRET_KEY_FILE` (absolute paths, at most 64 KiB, one trailing newline removed; never logged; use these in
+production, for example with systemd credentials or Docker secrets). Limits: `GNOME_MAX_CONNECTIONS` (4096, lowered
+to fit the descriptor limit), `GNOME_MAX_CONNS_PER_IP` (256 per IPv4 address or IPv6 /64, untrusted peers),
+`GNOME_MAX_INFLIGHT_PER_IP` (256 requests in flight per client, ×4 per IPv6 /56, ×16 per /48),
+`GNOME_MAX_INFLIGHT_HEAD_MB` (64: the budget for request heads over 64 KiB), `GNOME_SYNC_QUOTA_MB` (64 per account)
+and `GNOME_SYNC_TOTAL_MB` (1024 for all accounts). `GNOME_COOKIE_HYGIENE` (`app` or `registrable`) chooses which
+cookies the app clears that proxied pages planted for its hostname.
 
 **A fresh server contacts game hosts by itself.** With the defaults, `gnome-server serve` imports the GamePix feed
 30 s after start (then every 24 h; about 16,000 games in about 3 minutes) and downloads the reviewed open-source game
@@ -430,8 +454,8 @@ The admin listener (`GNOME_ADMIN_BIND`, default `127.0.0.1:9091`; empty disables
 | Path | What |
 | --- | --- |
 | `GET /admin/` | HTML diagnostics page (`?refresh=5` reloads it) |
-| `GET /admin/diagnostics` | JSON: build, configuration without secrets, database, upstreams, jobs, WebSockets, rate limiter, static files |
-| `GET /admin/metrics` | Prometheus text (`gnome_build_info`, `gnome_http_*`, `gnome_wisp_upstream_up{id}`, `process_*`, …) |
+| `GET /admin/diagnostics` | JSON: build, configuration without secrets, database (with the sync storage totals), upstreams, jobs, WebSockets, rate limiter, static files, `connections` (caps, active, refusals) and `proxy_trust` (requests with https origins from untrusted peers) |
+| `GET /admin/metrics` | Prometheus text (`gnome_build_info`, `gnome_http_*` including the Wave D `gnome_http_connections_total`, `_connections_refused_total`, `_inflight_refused_total`, `_large_head_refused_total`, `_answer_refused_total`, `_cap_full_seconds_total`, `gnome_wisp_upstream_up{id}`, `process_*`, …) |
 | `POST /admin/filters/refresh` | Re-check every filter list now (header `X-GNOME-Request: 1`; answers 202) |
 
 - **Without `GNOME_ADMIN_TOKEN`**, the listener only answers requests addressed to localhost.
@@ -634,7 +658,7 @@ Settings live in this browser. With an account and Sync on, they also sync to th
 | `npm run dev:engine` | Copies `vendor/` once, then watch-builds the engine host and `sw.js` into `dist/` (`index.html` is left alone) |
 | `npm run preview` | Serves the built `dist/` (or `GNOME_DIST_DIR`) on `127.0.0.1:4173` and, like `npm run dev`, proxies `/api` to `GNOME_DEV_BACKEND`. Browsing there needs `GNOME_PUBLIC_ORIGINS` to include `http://127.0.0.1:4173` (not tested) |
 | `npm run check` | `svelte-check` plus `tsc` for the app and the service worker |
-| `npm test` | Vitest unit tests (1497 tests on 2026-11-23) |
+| `npm test` | Vitest unit tests (1516 tests on 2026-11-24) |
 | `npm run build:e2e` | Build with test hooks for the e2e runner. **Never deploy it** |
 | `npm run qa:visual` | Screenshot QA against `npm run dev -- --port 21000 --strictPort` (or any app URL in `GNOME_QA_URL`). Set `GNOME_QA_OUT`, or it writes into `docs/screenshots/foundation/` |
 
@@ -661,10 +685,10 @@ other's dependency cache (every page then fails with "Failed to fetch dynamicall
 `GNOME_STATIC_RELOAD=true` (development only) makes the server pick up new builds without a restart. Without it,
 run `npm run build` and restart `gnome-server` after each change.
 
-**Rust** (from the repository root; each of these passed on 2026-11-23):
+**Rust** (from the repository root; each of these passed on 2026-11-24):
 
 ```sh
-cargo test --workspace --locked                                  # 500 passed, 5 ignored
+cargo test --workspace --locked                                  # 536 passed, 5 ignored
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 # ignored tests that need the network: real HolyWisp + gnome-server (HOLYWISP_BIN must be an absolute path),
@@ -710,47 +734,33 @@ node engine/run.mjs --browser all --build-server # or point GNOME_SERVER_BIN at 
 
 ## Production notes
 
-What exists today for a production setup (deployment files come in Wave D, see below):
+There are three ways to run GNOME in production, all described step by step in
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and, for a first install, in [START-GUIDE.md](START-GUIDE.md):
 
-- **HTTPS with two hostnames** behind a reverse proxy: an app hostname and a proxy hostname. Use sibling names such
-  as `gnome.example.com` and `p.gnome.example.com`. Service workers need HTTPS (or localhost).
+- **Route A: the Docker stack** (`deployment/compose.yml`): Caddy (the only service with published ports, 80 and
+  443, automatic HTTPS), the FROM-scratch `gnome-server` image (user 65532, read-only, no capabilities) and HolyWisp
+  on its own network. Secrets come from files made by `deployment/init-secrets.sh`. VPN exits are added with
+  `deployment/compose.vpn.yml`.
+- **Route B: the release artifact with systemd** (`scripts/release.sh` builds it): static binaries, the web app,
+  `deployment/systemd/gnome-server.service` (`DynamicUser`, an empty capability set, a system-call filter,
+  `systemd-analyze security` 1.4) and HolyWisp's unit, with the same Caddyfile in front.
+- **Route C: your own front** (nginx, Traefik, a CDN): the conditions it must meet are in DEPLOYMENT.md, "Other fronts
+  and CDNs".
 
-  ```sh
-  GNOME_BIND=127.0.0.1:8080 \
-  GNOME_PUBLIC_ORIGINS=https://gnome.example.com \
-  GNOME_PROXY_ORIGIN=https://p.gnome.example.com \
-  GNOME_TRUSTED_PROXIES=127.0.0.1/32 \
-  GNOME_HSTS=true \
-  ./target/release/gnome-server serve
-  ```
+Rules that hold for every route:
 
-  This combination passes `config check` with "proxy isolation: on (two-origin mode)".
-- **Reverse proxy.** It must send both hostnames to `GNOME_BIND`, keep `Host` (or set `X-Forwarded-Host`), and set
-  `X-Forwarded-For` and `X-Forwarded-Proto`. It must also pass WebSocket upgrades for `/wisp/` and `/wisp/p/<id>/`
-  on the proxy hostname. `X-Forwarded-*` headers are only trusted from `GNOME_TRUSTED_PROXIES` (default loopback).
-- **No reverse-proxy error pages on the proxy hostname.** Pages the reverse proxy writes itself (such as Caddy's
-  answer to an oversized request head) carry no GNOME CSP, so a hostile page could load one and connect out directly,
-  revealing the user's IP. Raise the header-size limit above browsers' URL limits (Caddy: `max_header_size` above
-  2 MB), or add a strict policy to those pages. The Wave D Caddy configuration will handle this.
-- **Keep Wisp tickets out of access logs.** The engine host connects to `wss://<proxy host>/wisp/?t=<ticket>&/`: the
-  ticket is a bearer credential (valid 1 h by default) in the query string. `gnome-server` never logs query strings,
-  but a reverse proxy's access log does by default, so drop or redact the query of `/wisp/` requests there.
-- **Never expose publicly** the admin listener (keep it on loopback, or set a token plus
-  `GNOME_ADMIN_ALLOW_REMOTE=true`), HolyWisp's port 6001 (no authentication, no Origin check), the VPN egress
-  HolyWisp instances or gluetun's control port. Only `GNOME_BIND` (and `GNOME_PROXY_BIND`, if you use it) belong
-  behind the reverse proxy.
-- **HolyWisp as a service.** [services/holywisp/README.md](services/holywisp/README.md) has `holywisp.service`
-  (the main instance), `holywisp@.service` (one per VPN exit, fail-closed) and a `Dockerfile`. The units were
-  checked with `systemd-analyze verify` only and have not been booted under systemd here. Restart HolyWisp, do not
-  reload it: SIGHUP stops it.
-- **Persistence.** Back up `GNOME_DATA_DIR`. It holds `gnome.db` (SQLite WAL), `secret.key` (0600) and `filters/`.
-- **Rebuilding the frontend:** run `npm run build`, then restart `gnome-server` (static files are indexed at start).
-
-**Coming in Wave D** (not in the repository yet): a `gnome-server` Docker image and a whole-stack compose file
-(`services/vpn/compose.example.yml` already expects `GNOME_SERVER_IMAGE`, which does not exist yet), a Caddy
-configuration, a systemd unit for `gnome-server`, Raspberry Pi 4 notes, the rest of the production build pipeline
-(precompressed `.br`/`.gz`, image optimisation, opt-in obfuscation), benchmarks and dependency audits
-(`cargo audit`/`cargo deny`, `npm audit`).
+- **Two HTTPS hostnames**, an app hostname and a proxy hostname (siblings such as `gnome.example.com` and
+  `p.gnome.example.com`), with `GNOME_PUBLIC_ORIGINS`, `GNOME_PROXY_ORIGIN` and `GNOME_TRUSTED_PROXIES` set to the
+  front's address. `config check` reports "proxy isolation: on (two-origin mode)".
+- **The front**: [deployment/Caddyfile](deployment/Caddyfile) is the tested configuration. It raises
+  `max_header_size` to 4 MB and puts a strict CSP on Caddy's own error answers and redirects, so no front-written page
+  on the proxy hostname can run code. It removes `Cookie` on the proxy hostname, and its log drops client addresses,
+  headers and query strings (Wisp tickets travel as `?t=`).
+- **Never expose publicly** the admin listener (loopback, with an admin token from `GNOME_ADMIN_TOKEN_FILE`),
+  HolyWisp's port 6001, the VPN egress HolyWisp instances or gluetun's control port.
+- **Secrets** as files (`GNOME_*_FILE`), never in environment files or shell history.
+- **Backups**: `gnome-server db backup <new file>` while the server runs; keep `secret.key` too.
+- **Restart HolyWisp, do not reload it**: SIGHUP stops it.
 
 ## Project layout
 
@@ -762,6 +772,9 @@ frontend/           Svelte 5 + TypeScript app, engine host (engine/), service wo
 services/holywisp/  pinned HolyWisp build, gnome.conf, systemd units, Dockerfile
 services/vpn/       VPN egress recipes and profiles example
 database/           SQL migrations
+deployment/         Dockerfile, compose stack, Caddyfile, systemd unit, secrets and check scripts
+scripts/            release.sh, audit.sh, budgets, third-party license tooling
+bench/              benchmark harness, Node.js and wisp-js baselines, load generator (never shipped)
 tests/e2e/          Playwright e2e runner and QA scripts
 docs/               design and planning documents
 ```
@@ -775,7 +788,11 @@ docs/               design and planning documents
 | [docs/API.md](docs/API.md) | HTTP API |
 | [docs/ENGINE-PROTOCOL.md](docs/ENGINE-PROTOCOL.md) | App ↔ engine host protocol, with what is proven and what is not |
 | [docs/DESIGN.md](docs/DESIGN.md) | Design system |
-| [docs/WAVE-B.md](docs/WAVE-B.md), [docs/WAVE-B3.md](docs/WAVE-B3.md) | Plans for the proxy and browser, and for the extensions |
+| [START-GUIDE.md](START-GUIDE.md) | Start everything: this PC and an Ubuntu 24.04 server |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), [deployment/README.md](deployment/README.md) | Production deployment: Docker stack, release artifact with systemd, Caddy, Raspberry Pi 4, operations |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md), [bench/README.md](bench/README.md) | Benchmark method and results |
+| [docs/AUDIT.md](docs/AUDIT.md) | Supply-chain audit policy and results |
+| [docs/WAVE-B.md](docs/WAVE-B.md), [docs/WAVE-B3.md](docs/WAVE-B3.md), [docs/WAVE-C.md](docs/WAVE-C.md), [docs/WAVE-D.md](docs/WAVE-D.md) | Plans for the proxy and browser, the extensions, games and VPN, and performance and production |
 | [backend/README.md](backend/README.md) | Server configuration, CLI, origins and roles |
 | [services/holywisp/README.md](services/holywisp/README.md), [services/vpn/README.md](services/vpn/README.md) | HolyWisp build and operation, VPN egress |
 | [crates/catalog/README.md](crates/catalog/README.md), [crates/net/README.md](crates/net/README.md) | Crate docs |
@@ -784,9 +801,12 @@ docs/               design and planning documents
 ### Licenses and credits
 
 GNOME is licensed **AGPL-3.0-only**. This is declared in `Cargo.toml` and the `package.json` files, and the full text
-is in [frontend/scripts/licenses/AGPL-3.0.txt](frontend/scripts/licenses/AGPL-3.0.txt). If you run a modified
-instance for others, set `GNOME_SOURCE_URL` so the About page links to your source (AGPL §13). The About page lists
-every third-party component with its license.
+is in [LICENSE](LICENSE). If you run a modified instance for others, set `GNOME_SOURCE_URL` so the About page links to
+your source (AGPL §13); release builds made with `scripts/release.sh --source-url-base URL` compile that link in as
+the default. The About page lists every third-party component with its license. A release `dist/` carries
+`licenses/THIRD-PARTY-NOTICES.txt`, and each release artifact a licenses bundle (`share/licenses/`), next to the source
+tarball (`gnome-<v>-src.tar.gz`) and, for a published release, the third-party source tarball of the copyleft
+components.
 
 GNOME builds on:
 
@@ -807,7 +827,3 @@ GNOME's extensions are first-party features. They are not Chrome extensions, and
 GNOME contains no code from Sapphire, which was only studied
 ([docs/research/sapphire.md](docs/research/sapphire.md)) and has no license. GNOME is an independent project and is
 not affiliated with, sponsored or endorsed by Mullvad VPN AB or any other VPN provider.
-# gnome
-# gnome
-# gnome
-# gnome

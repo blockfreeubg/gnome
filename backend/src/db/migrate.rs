@@ -17,8 +17,10 @@ use crate::security::crypto::sha256_hex;
 use crate::util::now_ms;
 
 /// Core migrations, owned by gnome-server. Append new versions; never edit shipped ones.
-pub const CORE_MIGRATIONS: &[Migration] =
-    &[Migration { version: 1, name: "core", sql: include_str!("../../../database/migrations/0001_core.sql") }];
+pub const CORE_MIGRATIONS: &[Migration] = &[
+    Migration { version: 1, name: "core", sql: include_str!("../../../database/migrations/0001_core.sql") },
+    Migration { version: 2, name: "sync_quota", sql: include_str!("../../../database/migrations/0002_sync_quota.sql") },
+];
 
 const BOOTSTRAP: &str = "CREATE TABLE IF NOT EXISTS schema_migrations (
     version    INTEGER PRIMARY KEY,

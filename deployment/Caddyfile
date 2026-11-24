@@ -1,0 +1,99 @@
+# GNOME's front (WAVE-D §5.3, D16): one file for production and the tests; what differs comes from the environment.
+#
+#   GNOME_APP_HOST / GNOME_PROXY_HOST   the two sibling hostnames (gnome.example.com, p.gnome.example.com)
+#   GNOME_APP_UPSTREAM / GNOME_PROXY_UPSTREAM   gnome-server's app and proxy listeners
+#   GNOME_TLS_MODE      acme (default) or files (GNOME_TLS_CERT_FILE / GNOME_TLS_KEY_FILE)
+#   GNOME_HSTS          true (default) or false: Strict-Transport-Security on Caddy's own answers too
+#   CADDY_BIND_MODE     any (default: Go's dual-stack wildcard) or loopback (the test suites: 127.0.0.1 only)
+#   CADDY_ADMIN         Caddy's admin endpoint (default localhost:2019 inside its own container; tests use "off")
+#   CADDY_HTTP_PORT / CADDY_HTTPS_PORT   listening ports inside the container (8080 / 8443; compose maps 80/443)
+#
+# Caddy's own answers (502/503/504, the http:// redirect) carry the same strict policy as gnome-server's automatic
+# answers (csp::NOTHING_RUNS_UNFRAMED). Logs: no client address, no headers, paths without query strings (Wisp tickets
+# travel as ?t=); access logs are off. gnome-server records IPs only with GNOME_LOG_IPS=true.
+{
+	admin {$CADDY_ADMIN:localhost:2019}
+	http_port {$CADDY_HTTP_PORT:8080}
+	https_port {$CADDY_HTTPS_PORT:8443}
+	import /etc/caddy/bind-{$CADDY_BIND_MODE:any}.caddy
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+		max_header_size 4MB
+		timeouts {
+			read_header 20s
+			idle 5m
+		}
+	}
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>client_ip delete
+				request>remote_port delete
+				request>headers delete
+				request>uri regexp \?.*$ ""
+			}
+		}
+	}
+}
+
+import /etc/caddy/tls-{$GNOME_TLS_MODE:acme}.caddy
+
+(hsts-true) {
+	header Strict-Transport-Security "max-age=31536000"
+}
+(hsts-false) {
+}
+
+(strict) {
+	header {
+		Content-Security-Policy "default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+		X-Content-Type-Options nosniff
+		Cache-Control no-store
+		Referrer-Policy no-referrer
+		Content-Type "text/plain; charset=utf-8"
+		-Server
+	}
+	import hsts-{$GNOME_HSTS:true}
+}
+
+(front) {
+	import tls
+	header -Server
+	handle_errors {
+		import strict
+		respond "{err.status_code} {err.status_text}"
+	}
+}
+
+(upstream) {
+	stream_close_delay 5m
+	transport http {
+		dial_timeout 3s
+		response_header_timeout 35s
+	}
+}
+
+https://{$GNOME_APP_HOST} {
+	import front
+	reverse_proxy {$GNOME_APP_UPSTREAM:172.30.80.10:8080} {
+		import upstream
+	}
+}
+
+https://{$GNOME_PROXY_HOST} {
+	import front
+	# No proxy-role route reads a cookie (D16).
+	request_header -Cookie
+	reverse_proxy {$GNOME_PROXY_UPSTREAM:172.30.80.10:8081} {
+		import upstream
+	}
+}
+
+http://{$GNOME_APP_HOST}, http://{$GNOME_PROXY_HOST} {
+	import strict
+	redir https://{host}{uri} 308
+}

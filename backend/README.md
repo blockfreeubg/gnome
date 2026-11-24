@@ -52,7 +52,10 @@ the app learns it from `GET /api/config`.
 | `gnome-server catalog import [--source S]… [--limit N] [--replay <index.json>]` | Import game feeds now (default: every enabled source); one JSON report per run; exit `1` when a run failed or was busy, `2` for an unknown or disabled source or a bad replay index. `--replay` answers the importers from captured responses and never contacts a host (development and tests). Needs the server's binds (the `oss` source needs a proxy origin) |
 | `gnome-server catalog stats` | Print the catalog statistics (`CatalogStats`) as JSON |
 | `gnome-server catalog fetch-oss [--slug S]…` | Download the pinned builds of the enabled open-source games (default: every entry whose build is missing or at another commit) from `codeload.github.com`; one JSON line per entry; exit `1` if one failed |
-| `gnome-server version` | Version and target |
+| `gnome-server health [--url URL] [--timeout-ms N]` | Ask the running server's `/api/health` (exit `0` ok, `1` not ok or unreachable); used by the image's health check |
+| `gnome-server admin get /admin/<path>` | `GET` from the local admin listener with the configured admin token; prints the body |
+| `gnome-server db backup <new file>` | Consistent snapshot (`VACUUM INTO`, file created 0600 with `O_EXCL`, then an integrity check) while the server runs |
+| `gnome-server version` | Version, target and build id |
 
 Exit codes: `0` success, `1` runtime failure, `2` configuration or usage error.
 
@@ -68,6 +71,7 @@ implementation.
 | `GNOME_BIND` | `0.0.0.0:8080` | public listener (role per request `Host`, see [Origins](#origins-and-roles)) |
 | `GNOME_ADMIN_BIND` | `127.0.0.1:9091` | admin listener; empty disables; non-loopback only with `GNOME_ADMIN_ALLOW_REMOTE=true` + token |
 | `GNOME_ADMIN_TOKEN` | – | bearer token (≥ 16 chars); without it only loopback `Host` names are answered |
+| `GNOME_ADMIN_TOKEN_FILE` / `GNOME_ACCESS_CODE_FILE` / `GNOME_SECRET_KEY_FILE` | – | read the secret from a file instead (absolute path, regular file, ≤ 64 KiB, UTF-8, one trailing newline removed; both forms set = error; a world-readable file is a warning). Never logged; `config check` shows `<redacted> (from file …)` |
 | `GNOME_ADMIN_ALLOW_REMOTE` | `false` | see above |
 | `GNOME_DATA_DIR` | `./data` | `gnome.db` (+ WAL), `secret.key`; created 0700 |
 | `GNOME_STATIC_DIR` | `./frontend/dist` | built SPA, indexed at startup (restart after deploying a new build) |
@@ -87,6 +91,12 @@ implementation.
 | `GNOME_WISP_UPSTREAM` | `127.0.0.1:6001` | the direct HolyWisp (internal address only; `localhost` is refused) |
 | `GNOME_WISP_TICKET_TTL_S` | `3600` | upper bound of a Wisp ticket's lifetime (60–604800; tickets also end with their session; checked only at the upgrade, so open connections outlive it) |
 | `GNOME_MAX_WS_PER_IP` / `GNOME_MAX_WS_PER_SESSION` | `32` / `16` | concurrent Wisp connections per client IP (IPv6 /64) / per session |
+| `GNOME_MAX_CONNECTIONS` | `4096` | connections on the public and proxy listeners together (16–1,000,000); lowered at start to `(soft RLIMIT_NOFILE − 512) / 6`, never below 16; over it: bodiless `503` + `Retry-After: 1`. The admin listener has its own 64 |
+| `GNOME_MAX_CONNS_PER_IP` | `256` (or the cap, if smaller) | connections per IPv4 address / IPv6 /64 from peers outside `GNOME_TRUSTED_PROXIES` (1–65,536); the excess is closed at once |
+| `GNOME_MAX_INFLIGHT_PER_IP` | `256` | requests in flight per client (the real client behind a trusted proxy), ×4 per IPv6 /56, ×16 per /48; beyond: `503 unavailable` with `tier` |
+| `GNOME_MAX_INFLIGHT_HEAD_MB` | `64` | byte budget for request heads over 64 KiB (4–1024) |
+| `GNOME_SYNC_QUOTA_MB` / `GNOME_SYNC_TOTAL_MB` | `64` / `1024` | sync storage per account / of all accounts (`413 quota_exceeded`) |
+| `GNOME_COOKIE_HYGIENE` | `app` | which cookies planted by proxied pages the app clears: `app` (its own hostname) or `registrable` (the registrable domain; only when no other site of yours shares it) |
 | `GNOME_VPN_PROFILES` | – | path of the VPN gateway profiles TOML (`services/vpn/profiles.example.toml`) |
 | `GNOME_VPN_CHECK_URL` / `GNOME_VPN_CHECK_URL_V6` | empty / empty | the operator's exit check service (HTTPS JSON with `ip`, `country`, `city`) and its IPv6-only name; **empty = no exit checks** (`verify_url: null`) |
 | `GNOME_VPN_CHECK_INTERVAL_MIN` | `15` | minutes between server-side checks of each location (± 20 %; 0–1440; `0` = on request only) |
@@ -133,6 +143,7 @@ Adding a setting: a `VarSpec` in `VARS` (mark it `inactive(..)` until a module r
 | `state.rs` | `AppState` (cheap `Arc` handle): config, `Db`, secret key, password hasher, rate limiter, login backoff, metrics, static index, security policies, jobs, shutdown token + task tracker, module list, module state |
 | `module.rs` | `Module` trait (with the start-up hook `prepare`, awaited before jobs start and listeners accept), `ModuleSetup`, `Ext<T>`, `builtin_modules` (`core`, `accounts`, `wisp`, `vpn`, `filters`, `games`) |
 | `origins.rs` | `Role` (app / proxy / single-origin), `ProxySetup` (proxy origin, app origins, validation, warnings) |
+| `limits.rs` | Wave D limits: the connection cap and per-peer cap at accept, the per-client in-flight cap with IPv6 tiers, exact request-head caps per listener and peer trust, the large-head and large-answer byte budgets, concurrent sync pulls, proxy-trust accounting, the hardened 503/431 |
 | `server.rs` | Listeners (public, proxy, admin; hyper HTTP/1.1, upgrades enabled, header-read timeout), accept loops, graceful shutdown |
 | `router.rs` | Per-role routers, `Host` dispatch on the public listener, admin router; middleware order; body limits; request timeout; panic → 500 JSON |
 | `gateway/mod.rs` | The `wisp` module: `POST /api/wisp/ticket`, `/wisp/` + `/wisp/p/{id}/` upgrade checks, metrics, diagnostics |
@@ -514,7 +525,18 @@ that loses re-announces the stored winner (it gets the batch's `synced_at`), so 
 on its next pull. Tombstones are kept 180 days and at most 50 000 per account (oldest dropped first); history
 deletions propagate through `cleared_before`.
 
+**Quota (Wave D, migration `0002_sync_quota.sql`).** `users` gains `sync_bookmark_bytes`, `sync_history_bytes` and
+`sync_settings_bytes`, and `sync_totals` holds the sum over all accounts; triggers keep them exact on every insert,
+update and delete (a tombstone counts 64 bytes). A bookmark or settings write that grows an account past
+`GNOME_SYNC_QUOTA_MB` (or the server past `GNOME_SYNC_TOTAL_MB`) is rolled back with `413 quota_exceeded`; history
+over the quota is trimmed oldest first. `GET /api/sync/usage` reports the numbers. Pull pages stop at 1 MiB, two pulls
+per account run at once, and large answers share a 64 MiB budget (docs/API.md).
+
 ## Observability
+
+- Wave D metrics: `gnome_http_connections_total`, `gnome_http_connections_refused_total{reason}`,
+  `gnome_http_inflight_refused_total{tier}`, `gnome_http_large_head_refused_total`, `gnome_http_answer_refused_total`,
+  `gnome_http_cap_full_seconds_total`; `/admin/diagnostics` gains `connections` and `proxy_trust`.
 
 - Logs to stderr: `GNOME_LOG` (EnvFilter), `GNOME_LOG_FORMAT=pretty|json`. Access lines (target
   `gnome_server::access`): `method`, `route` (matched route or path without query; engine URLs reduced to their

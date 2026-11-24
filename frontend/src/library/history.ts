@@ -6,7 +6,9 @@
  * `browser.history.retentionDays` are pruned (at start, daily and when the setting changes: index.ts). The store
  * keeps at most MAX_VISITS visits (the oldest go first), so a forged commit stream from an escaped engine host,
  * which the VisitGate only slows down, cannot grow IndexedDB without bound (ENGINE-PROTOCOL §1.2 rule 2); and the work
- * an engine event causes is bounded too (updateTitle reads only the last 30 minutes of visits).
+ * an engine event causes is bounded too (updateTitle reads only the last 30 minutes of visits). Besides the count, the
+ * visits' estimated size is kept within MAX_HISTORY_BYTES (WAVE-D D21): 100 000 forged visits of maximal size would
+ * be ≈ 500 MB, enough to fill a small storage quota and break the app's other stores.
  *
  * Sync (account.syncHistory): every local visit and title change carries `syncPending` until the server
  * acknowledged it; visits from the server never do. Deleting visits is local: the sync API has no per-visit delete,
@@ -39,6 +41,8 @@ export interface HistoryDeps {
   /** The cap and how often it is checked (defaults MAX_VISITS and CAP_CHECK_EVERY; tests use less). */
   maxVisits?: number;
   capCheckEvery?: number;
+  /** The byte budget (default MAX_HISTORY_BYTES; tests use less). */
+  maxBytes?: number;
 }
 
 export interface LocalHistoryStore extends HistoryStore {
@@ -57,6 +61,8 @@ export interface LocalHistoryStore extends HistoryStore {
   /** Every visit of `url` (all of them, newest first): the page's "remove all visits to this page" count. */
   visitsOf(url: string): Promise<HistoryVisit[]>;
   readonly sync: RecordSyncAdapter<'history'>;
+  /** The byte budget's estimate (WAVE-D D21), recomputed from every visit when unknown. */
+  estimatedBytes(): Promise<number>;
   close(): void;
 }
 
@@ -69,6 +75,14 @@ export const MAX_VISITS = 100_000;
 /** The cap is checked after this many visits were added since the last check (so the store exceeds it by at most this). */
 export const CAP_CHECK_EVERY = 500;
 const DELETE_BATCH = 2000;
+/** Estimated stored size the visits are kept within (WAVE-D D21); above it the oldest go, down to HISTORY_BYTES_TRIM_TO of it. */
+export const MAX_HISTORY_BYTES = 64 * 1024 * 1024;
+export const HISTORY_BYTES_TRIM_TO = 0.9;
+
+/** A visit's estimated stored size: 2 bytes per URL and title character (UTF-16) plus 96 for the id, time and keys. */
+export function visitBytes(v: { url: string; title: string | null }): number {
+  return 2 * (v.url.length + (v.title?.length ?? 0)) + 96;
+}
 /** When IndexedDB is full, recordVisit drops this share of the oldest visits (at least QUOTA_EVICT_MIN) and retries. */
 export const QUOTA_EVICT_SHARE = 0.05;
 export const QUOTA_EVICT_MIN = 500;
@@ -105,12 +119,35 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
     for (let i = 0; i < ids.length; i += DELETE_BATCH) await db.deleteMany('history', ids.slice(i, i + DELETE_BATCH));
   }
 
+  // The byte budget's running estimate (null = unknown: recomputed by the next check, e.g. after remove(ids), whose
+  // sizes the store does not read). Recomputed at start by prune(); other tabs' writes are counted by their own store
+  // and by the next recompute.
+  const maxBytes = deps.maxBytes ?? MAX_HISTORY_BYTES;
+  let bytes: number | null = null;
+  const addBytes = (n: number): void => {
+    if (bytes !== null) bytes += n;
+  };
+  async function totalBytes(): Promise<number> {
+    if (bytes === null) {
+      let t = 0;
+      // A scan that keeps nothing: the filter sees every visit and returns false.
+      await db.query('history', { filter: (r) => ((t += visitBytes(r)), false) });
+      bytes = t;
+    }
+    return bytes;
+  }
+  /** Deletes visits the store has read, keeping the byte estimate. */
+  async function deleteRows(rows: readonly HistoryRecord[]): Promise<void> {
+    await deleteIds(rows.map((r) => r.id));
+    addBytes(-rows.reduce((sum, r) => sum + visitBytes(r), 0));
+  }
+
   /** Deletes the visits in a visitedAt range, DELETE_BATCH at a time (a range can hold all 100 000 visits). */
   async function removeWhere(range: { lower?: number; upper?: number; upperOpen?: boolean }): Promise<number> {
     let removed = 0;
     for (;;) {
       const rows = await db.query('history', { index: 'visitedAt', range, limit: DELETE_BATCH });
-      await deleteIds(rows.map((r) => r.id));
+      await deleteRows(rows);
       removed += rows.length;
       if (rows.length < DELETE_BATCH) return removed;
     }
@@ -123,8 +160,28 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
   async function dropOldest(n: number): Promise<number> {
     if (n <= 0) return 0;
     const oldest = await db.query('history', { index: 'visitedAt', limit: n });
-    await deleteIds(oldest.map((r) => r.id));
+    await deleteRows(oldest);
     return oldest.length;
+  }
+
+  /** Above the byte budget: deletes the oldest visits until the estimate is HISTORY_BYTES_TRIM_TO of it. */
+  async function trimToBytes(): Promise<number> {
+    if ((await totalBytes()) <= maxBytes) return 0;
+    const target = maxBytes * HISTORY_BYTES_TRIM_TO;
+    let removed = 0;
+    for (let excess = (await totalBytes()) - target; excess > 0; excess = (await totalBytes()) - target) {
+      const rows = await db.query('history', { index: 'visitedAt', limit: DELETE_BATCH });
+      if (!rows.length) break;
+      const take: HistoryRecord[] = [];
+      for (const r of rows) {
+        if (excess <= 0) break;
+        take.push(r);
+        excess -= visitBytes(r);
+      }
+      await deleteRows(take);
+      removed += take.length;
+    }
+    return removed;
   }
 
   // The total cap. `added` counts the visits this page added since the last check; one check runs at a time.
@@ -137,8 +194,8 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
       try {
         added = 0;
         const total = await db.count('history');
-        if (total <= maxVisits) return 0;
-        return await dropOldest(total - maxVisits);
+        const dropped = total > maxVisits ? await dropOldest(total - maxVisits) : 0;
+        return dropped + (await trimToBytes());
       } finally {
         capRun = null;
       }
@@ -167,6 +224,7 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
       const rec: HistoryRecord = { id: uuid(), url: href, title: storableTitle(title), visitedAt: t, syncPending: t };
       try {
         await db.putMany('history', [rec]);
+        addBytes(visitBytes(rec));
       } catch (err) {
         if (!isQuotaError(err)) throw err;
         // The browser's storage for GNOME is full. History is a rolling window: it makes room by dropping its oldest
@@ -176,6 +234,7 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
         const dropped = await dropOldest(Math.min(total, Math.max(QUOTA_EVICT_MIN, Math.ceil(total * QUOTA_EVICT_SHARE))));
         if (dropped) changed(false);
         await db.putMany('history', [rec]);
+        addBytes(visitBytes(rec));
       }
       changed(true);
       await noteAdded(1);
@@ -198,6 +257,7 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
       });
       if (!newest || newest.title === t) return;
       await db.putMany('history', [{ ...newest, title: t, syncPending: pendingStamp(newest.syncPending) }]);
+      addBytes(2 * (t.length - (newest.title?.length ?? 0)));
       changed(true);
     },
 
@@ -250,17 +310,18 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
       const list = ids.filter((id) => typeof id === 'string');
       if (!list.length) return;
       await deleteIds(list);
+      bytes = null;
       changed(false);
     },
 
     async removeUrl(url) {
       const keys = new Set([url, storableUrl(url)].filter((u): u is string => !!u));
-      let ids: string[] = [];
-      for (const k of keys) ids = ids.concat((await db.query('history', { index: 'url', range: { only: k } })).map((r) => r.id));
-      if (!ids.length) return 0;
-      await deleteIds(ids);
+      let rows: HistoryRecord[] = [];
+      for (const k of keys) rows = rows.concat(await db.query('history', { index: 'url', range: { only: k } }));
+      if (!rows.length) return 0;
+      await deleteRows(rows);
       changed(false);
-      return ids.length;
+      return rows.length;
     },
 
     async removeRange(from, to) {
@@ -271,6 +332,7 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
 
     async clear() {
       await db.clear('history');
+      bytes = 0;
       changed(false);
     },
 
@@ -298,6 +360,8 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
         puts.push({ id: v.id, url, title: storableTitle(v.title), visitedAt: Math.min(v.visitedAt, t), syncPending: t });
       }
       await db.putMany('history', puts);
+      // Restored ids may still exist (a restore that raced a sync): the estimate is recomputed.
+      if (puts.length) bytes = null;
       if (puts.length) {
         changed(true);
         await noteAdded(puts.length);
@@ -348,12 +412,18 @@ export function createHistoryStore(deps: HistoryDeps): LocalHistoryStore {
           if (min !== null && item.visitedAt < min) continue;
           const local = await db.get('history', item.id);
           if (local?.syncPending !== undefined) continue; // a local edit not uploaded yet wins; it goes up next
-          puts.push({ id: item.id, url, title: storableTitle(item.title), visitedAt: item.visitedAt });
+          const rec: HistoryRecord = { id: item.id, url, title: storableTitle(item.title), visitedAt: item.visitedAt };
+          addBytes(visitBytes(rec) - (local ? visitBytes(local) : 0));
+          puts.push(rec);
         }
         await db.putMany('history', puts);
         if (puts.length || removed) changed(false);
         if (puts.length) await noteAdded(puts.length);
       },
+    },
+
+    estimatedBytes() {
+      return totalBytes();
     },
 
     close() {

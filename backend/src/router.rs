@@ -39,7 +39,7 @@ use crate::security::csp::NOTHING_RUNS_UNFRAMED;
 use crate::security::rate_limit::{RateClass, enforce};
 use crate::security::{ClientInfo, csrf, headers};
 use crate::state::AppState;
-use crate::{admin, observability, static_files};
+use crate::{admin, limits, observability, static_files};
 
 /// Default request body limit (API.md).
 pub const DEFAULT_BODY_LIMIT: usize = 256 * 1024;
@@ -115,6 +115,7 @@ fn role_router(state: &AppState, role: Role) -> Router {
         .layer(middleware::from_fn(timeout))
         .layer(middleware::from_fn_with_state(state.clone(), api_guard))
         .layer(middleware::from_fn_with_state(state.clone(), csrf::middleware))
+        .layer(middleware::from_fn_with_state(state.clone(), limits::middleware))
         .layer(middleware::from_fn_with_state(state.clone(), headers::middleware))
         .layer(middleware::from_fn_with_state(state.clone(), observability::observe))
         .layer(Extension(role))

@@ -1,5 +1,5 @@
 //! Command-line interface: `serve` (default) · `migrate` · `user create|reset-password` · `filters refresh|status` ·
-//! `config check` · `version`.
+//! `config check` · `health` · `admin get` · `db backup` · `version`.
 
 use std::io::{BufRead as _, IsTerminal as _};
 use std::path::Path;
@@ -49,8 +49,35 @@ pub enum Command {
     /// The game catalog: import feeds, print statistics, fetch open-source game builds.
     #[command(subcommand)]
     Catalog(crate::games::cli::CatalogCommand),
+    /// Ask the running server's `/api/health` (exit 0 ok, 1 not ok or unreachable, 2 configuration error).
+    Health {
+        /// Ask this URL instead of `http://<GNOME_BIND>/api/health` (plain `http://` only).
+        #[arg(long)]
+        url: Option<String>,
+        /// Give up after this many milliseconds.
+        #[arg(long, default_value_t = 3000)]
+        timeout_ms: u64,
+    },
+    /// Read from the local admin listener (`GNOME_ADMIN_BIND`).
+    #[command(subcommand)]
+    Admin(AdminCommand),
+    /// Database maintenance.
+    #[command(subcommand)]
+    Db(DbCommand),
     /// Print version information.
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminCommand {
+    /// `GET <path>` (must start with `/admin/`) with the admin token when one is configured; prints the body.
+    Get { path: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DbCommand {
+    /// Write a consistent snapshot of the database to a new file (mode 0600; the server may keep running).
+    Backup { file: std::path::PathBuf },
 }
 
 #[derive(Debug, Subcommand)]
@@ -102,8 +129,16 @@ pub fn main() -> ExitCode {
         Command::Filters(cmd) => filters(cmd),
         Command::Config(ConfigCommand::Check) => config_check(),
         Command::Catalog(cmd) => return crate::games::cli::run(cmd),
+        Command::Health { url, timeout_ms } => health(url.as_deref(), timeout_ms),
+        Command::Admin(AdminCommand::Get { path }) => admin_get(&path),
+        Command::Db(DbCommand::Backup { file }) => db_backup(&file),
         Command::Version => {
-            println!("gnome-server {VERSION} ({}-{})", std::env::consts::ARCH, std::env::consts::OS);
+            println!(
+                "gnome-server {VERSION} ({}-{}) build {}",
+                std::env::consts::ARCH,
+                std::env::consts::OS,
+                option_env!("GNOME_BUILD_ID").unwrap_or("unknown")
+            );
             Ok(())
         }
     };
@@ -155,6 +190,171 @@ fn serve() -> Result<(), Failure> {
         let state = AppState::open(config).await.map_err(runtime)?;
         crate::server::run(state).await.map_err(runtime)
     })
+}
+
+/// One plain HTTP/1.1 `GET` (`Connection: close`); returns the status code and the body.
+fn http_get(
+    addr: std::net::SocketAddr,
+    host: &str,
+    path: &str,
+    bearer: Option<&str>,
+    timeout: std::time::Duration,
+) -> Result<(u16, Vec<u8>), String> {
+    use std::io::{Read as _, Write as _};
+    let mut s = std::net::TcpStream::connect_timeout(&addr, timeout).map_err(|e| format!("connect {addr}: {e}"))?;
+    s.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    s.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    let auth = bearer.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: gnome-server-cli\r\n{auth}Connection: close\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).map_err(|e| format!("send: {e}"))?;
+    let mut buf = Vec::new();
+    // Bounded: the health and diagnostics answers are small.
+    s.take(16 << 20).read_to_end(&mut buf).map_err(|e| format!("read: {e}"))?;
+    let end = buf.windows(4).position(|w| w == b"\r\n\r\n").ok_or("malformed answer (no end of head)")?;
+    let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+    let status =
+        head.split_ascii_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok()).ok_or("malformed status line")?;
+    let mut body = buf[end + 4..].to_vec();
+    let chunked = head.lines().any(|l| {
+        let l = l.to_ascii_lowercase();
+        l.starts_with("transfer-encoding:") && l.contains("chunked")
+    });
+    if chunked {
+        body = dechunk(&body).ok_or("malformed chunked body")?;
+    }
+    Ok((status, body))
+}
+
+fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    loop {
+        let nl = b.windows(2).position(|w| w == b"\r\n")?;
+        let size_txt = std::str::from_utf8(&b[..nl]).ok()?;
+        let size = usize::from_str_radix(size_txt.split(';').next()?.trim(), 16).ok()?;
+        b = &b[nl + 2..];
+        if size == 0 {
+            return Some(out);
+        }
+        out.extend_from_slice(b.get(..size)?);
+        b = b.get(size + 2..)?;
+    }
+}
+
+/// An unspecified bind address (`0.0.0.0`, `::`) is asked on loopback.
+fn local_addr(mut a: std::net::SocketAddr) -> std::net::SocketAddr {
+    if a.ip().is_unspecified() {
+        a.set_ip(if a.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() } else { std::net::Ipv6Addr::LOCALHOST.into() });
+    }
+    a
+}
+
+fn health(url: Option<&str>, timeout_ms: u64) -> Result<(), Failure> {
+    let timeout = std::time::Duration::from_millis(timeout_ms.max(1));
+    let (addr, host, path) = match url {
+        Some(u) => {
+            let rest =
+                u.strip_prefix("http://").ok_or_else(|| Failure::Config(format!("--url must be http://: {u}")))?;
+            let (authority, path) = rest.find('/').map_or((rest, "/api/health"), |i| (&rest[..i], &rest[i..]));
+            let addr = std::net::ToSocketAddrs::to_socket_addrs(authority)
+                .ok()
+                .and_then(|mut a| a.next())
+                .ok_or_else(|| Failure::Config(format!("--url: cannot resolve {authority} (give host:port)")))?;
+            (addr, authority.to_string(), path.to_string())
+        }
+        None => {
+            let config = load_config()?;
+            let addr = local_addr(config.bind);
+            (addr, addr.to_string(), "/api/health".to_string())
+        }
+    };
+    let (status, body) = http_get(addr, &host, &path, None, timeout).map_err(runtime)?;
+    let text = String::from_utf8_lossy(&body);
+    println!("{}", text.trim_end());
+    let ok = status == 200
+        && serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .is_some_and(|v| v.get("status").and_then(|s| s.as_str()) == Some("ok"));
+    if ok { Ok(()) } else { Err(Failure::Runtime(format!("health: HTTP {status}"))) }
+}
+
+fn admin_get(path: &str) -> Result<(), Failure> {
+    if !path.starts_with("/admin/") || path.contains(char::is_whitespace) {
+        return Err(Failure::Config(format!("admin get: the path must start with /admin/ (got {path:?})")));
+    }
+    let config = load_config()?;
+    let addr = config
+        .admin_bind
+        .map(local_addr)
+        .ok_or_else(|| Failure::Runtime("the admin listener is disabled (GNOME_ADMIN_BIND is empty)".into()))?;
+    let host = match addr.ip() {
+        std::net::IpAddr::V6(_) => format!("[::1]:{}", addr.port()),
+        std::net::IpAddr::V4(_) => format!("127.0.0.1:{}", addr.port()),
+    };
+    let token = config.admin_token.as_ref().map(|t| t.expose().to_string());
+    let (status, body) =
+        http_get(addr, &host, path, token.as_deref(), std::time::Duration::from_secs(10)).map_err(runtime)?;
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    out.write_all(&body).map_err(runtime)?;
+    if !body.ends_with(b"\n") {
+        let _ = out.write_all(b"\n");
+    }
+    if (200..300).contains(&status) {
+        Ok(())
+    } else {
+        Err(Failure::Runtime(format!("admin get {path}: HTTP {status}")))
+    }
+}
+
+fn db_backup(target: &Path) -> Result<(), Failure> {
+    let config = load_config()?;
+    let source = config.db_path();
+    if !source.exists() {
+        return Err(Failure::Runtime(format!("no database at {}", source.display())));
+    }
+    // Created first with O_EXCL and 0600: SQLite would create it 0644 & ~umask, outside the unit's UMask.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        opts.mode(0o600);
+    }
+    opts.open(target).map_err(|e| Failure::Runtime(format!("cannot create {}: {e}", target.display())))?;
+    let result = (|| -> Result<(u64, Vec<i64>), String> {
+        let conn = rusqlite::Connection::open_with_flags(&source, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+            .map_err(|e| e.to_string())?;
+        conn.busy_timeout(std::time::Duration::from_secs(10)).map_err(|e| e.to_string())?;
+        conn.execute_batch("PRAGMA temp_store = MEMORY; PRAGMA cache_size = -8192;").map_err(|e| e.to_string())?;
+        let target_txt = target.to_str().ok_or("the target path is not UTF-8")?;
+        conn.execute("VACUUM INTO ?1", [target_txt]).map_err(|e| format!("VACUUM INTO: {e}"))?;
+        drop(conn);
+        let copy = rusqlite::Connection::open_with_flags(target, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| e.to_string())?;
+        let check: String = copy.query_row("PRAGMA integrity_check", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+        if check != "ok" {
+            return Err(format!("integrity check of the copy failed: {check}"));
+        }
+        let mut stmt =
+            copy.prepare("SELECT version FROM schema_migrations ORDER BY version").map_err(|e| e.to_string())?;
+        let versions =
+            stmt.query_map([], |r| r.get::<_, i64>(0)).and_then(Iterator::collect).map_err(|e| e.to_string())?;
+        let size = std::fs::metadata(target).map_err(|e| e.to_string())?.len();
+        Ok((size, versions))
+    })();
+    match result {
+        Ok((size, versions)) => {
+            println!("backup written: {} ({}, schema versions {versions:?})", target.display(), human_bytes(size));
+            println!("note: secret.key is not part of the backup; keep it separately or in your secret store");
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(target);
+            Err(Failure::Runtime(format!("db backup: {e}")))
+        }
+    }
 }
 
 /// Open the database for a one-shot command (creates the data dir, applies migrations).

@@ -66,11 +66,11 @@ pub struct DeleteRequest {
     pub all: Option<bool>,
 }
 
-fn encode_cursor(synced_at: i64, id: &str) -> String {
+pub(crate) fn encode_cursor(synced_at: i64, id: &str) -> String {
     b64url(format!("{synced_at}:{id}").as_bytes())
 }
 
-fn decode_cursor(cursor: &str) -> Option<(i64, String)> {
+pub(crate) fn decode_cursor(cursor: &str) -> Option<(i64, String)> {
     let raw = String::from_utf8(b64url_decode(cursor)?).ok()?;
     let (at, id) = raw.split_once(':')?;
     let at: i64 = at.parse().ok()?;
@@ -90,7 +90,7 @@ pub async fn get(
     client: ClientInfo,
     RequireUser(u): RequireUser,
     ApiQuery(q): ApiQuery<PageQuery>,
-) -> Result<Json<Page>, ApiError> {
+) -> Result<Response, ApiError> {
     super::limit(&state, &client, &u)?;
     let limit = q.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=MAX_PAGE).contains(&limit) {
@@ -100,6 +100,7 @@ pub async fn get(
         Some(c) => Some(decode_cursor(c).ok_or_else(|| ApiError::bad_request("invalid cursor"))?),
         None => None,
     };
+    let pull = super::begin_pull(&state, &u)?;
     let since = q.since.unwrap_or(0).max(0);
     let uid = u.user.id;
     let page = state
@@ -132,8 +133,18 @@ pub async fn get(
                     .query_map(params![uid, since, fetch], map)?
                     .collect::<Result<_, _>>()?,
             };
-            let more = rows.len() > limit as usize;
+            let mut more = rows.len() > limit as usize;
             rows.truncate(limit as usize);
+            // D22: a page also ends once its JSON reaches 1 MiB.
+            let mut bytes = 0usize;
+            if let Some(cut) = rows.iter().position(|(e, _)| {
+                let over = bytes >= super::PAGE_BYTES;
+                bytes += serde_json::to_vec(e).map_or(0, |v| v.len() + 1);
+                over
+            }) {
+                rows.truncate(cut);
+                more = true;
+            }
             let next_cursor = if more { rows.last().map(|(e, at)| encode_cursor(*at, &e.id)) } else { None };
             // The clock itself, never `since` (see bookmarks::get).
             let server_time = sync_clock(&tx, uid)?;
@@ -141,7 +152,25 @@ pub async fn get(
             Ok(Page { items: rows.into_iter().map(|(e, _)| e).collect(), next_cursor, server_time, cleared_before })
         })
         .await?;
-    Ok(Json(page))
+    Ok(super::pull_answer(&state, &page, pull))
+}
+
+/// Delete the account's oldest visits (by `visited_at`) until its stored bytes fit `quota`, or no visit is left.
+/// Returns how many went.
+fn trim_to_quota(conn: &Connection, uid: i64, quota: i64) -> Result<usize, ApiError> {
+    let excess = super::account_bytes(conn, uid)?.total() - quota;
+    if excess <= 0 {
+        return Ok(0);
+    }
+    Ok(conn.execute(
+        "DELETE FROM history WHERE pk IN (
+           SELECT pk FROM (
+             SELECT pk, cost, sum(cost) OVER (ORDER BY visited_at, pk) AS run FROM (
+               SELECT pk, visited_at, octet_length(url) + coalesce(octet_length(title), 0) + 100 AS cost
+                 FROM history WHERE user_id = ?1))
+           WHERE run - cost < ?2)",
+        params![uid, excess],
+    )?)
 }
 
 fn validate(items: &[HistoryEntry], now: i64) -> Result<(), ApiError> {
@@ -176,10 +205,12 @@ pub async fn post(
     validate(&batch.items, now)?;
     let uid = u.user.id;
     let items = batch.items;
-    let applied = state
+    let (quota, cap) = super::quotas(&state);
+    let (applied, trimmed) = state
         .db
-        .write(move |c| -> Result<usize, ApiError> {
+        .write(move |c| -> Result<(usize, usize), ApiError> {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let before = super::before(&tx, uid)?;
             let cutoff = cleared_before(&tx, uid)?.unwrap_or(i64::MIN);
             let synced_at = next_synced_at(&tx, uid, now)?;
             let mut applied = 0;
@@ -204,11 +235,15 @@ pub async fn post(
                     params![uid, count - MAX_HISTORY_PER_USER],
                 )?;
             }
+            // D20: history is never refused for the account quota: the oldest visits go until the account fits.
+            let trimmed = trim_to_quota(&tx, uid, quota)?;
+            // The server-wide cap refuses history too (trimming one account to make room for another is not done).
+            super::check_server_growth(cap, &tx, before)?;
             tx.commit()?;
-            Ok(applied)
+            Ok((applied, trimmed))
         })
         .await?;
-    Ok(Json(serde_json::json!({ "applied": applied })))
+    Ok(Json(serde_json::json!({ "applied": applied, "trimmed": trimmed })))
 }
 
 /// Delete entries visited before `before`, or everything with `{"all": true}`.

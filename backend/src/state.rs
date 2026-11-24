@@ -17,6 +17,7 @@ use crate::auth::password::Passwords;
 use crate::config::Config;
 use crate::db::Db;
 use crate::jobs::JobRegistry;
+use crate::limits::Limits;
 use crate::metrics::Metrics;
 use crate::module::{Module, ModuleSetup, builtin_modules};
 use crate::security::client::TrustedProxies;
@@ -53,6 +54,8 @@ pub struct AppInner {
     pub limiter: RateLimiter,
     pub backoff: LoginBackoff,
     pub metrics: Metrics,
+    /// Connection caps, in-flight caps and byte budgets (WAVE-D §6.3).
+    pub limits: Arc<Limits>,
     pub static_files: StaticFiles,
     pub security_headers: SecurityHeaders,
     pub origins: OriginPolicy,
@@ -132,6 +135,7 @@ impl AppState {
             limiter: RateLimiter::new(config.rate_limit_scale),
             backoff: LoginBackoff::default(),
             metrics: Metrics::default(),
+            limits: Arc::new(Limits::new(&config)),
             static_files,
             security_headers: SecurityHeaders::new(&config),
             origins: OriginPolicy::new(config.public_origins.clone()),

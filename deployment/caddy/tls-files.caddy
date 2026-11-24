@@ -1,0 +1,4 @@
+# TLS from files (GNOME_TLS_MODE=files): a certificate chain and its key, mounted read-only at /run/secrets/tls.
+(tls) {
+	tls {$GNOME_TLS_CERT_FILE:/run/secrets/tls/cert.pem} {$GNOME_TLS_KEY_FILE:/run/secrets/tls/key.pem}
+}

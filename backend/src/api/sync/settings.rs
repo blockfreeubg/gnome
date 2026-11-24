@@ -85,10 +85,12 @@ pub async fn put(
     let base = body.base_updated_at;
     let uid = u.user.id;
     let now = now_ms();
+    let quotas = super::quotas(&state);
     let outcome = state
         .db
         .write(move |c| -> Result<Outcome, ApiError> {
             let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let before = super::before(&tx, uid)?;
             let current: Option<(String, i64)> = tx
                 .prepare_cached("SELECT data, updated_at FROM user_settings WHERE user_id = ?1")?
                 .query_row([uid], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -103,6 +105,8 @@ pub async fn put(
                  ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
             )?
             .execute(params![uid, data, updated_at])?;
+            // D20: dropping `tx` on refusal rolls the write back.
+            super::check_growth(quotas, &tx, uid, before)?;
             tx.commit()?;
             Ok(Outcome::Saved(updated_at))
         })

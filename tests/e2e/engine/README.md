@@ -62,6 +62,17 @@ server and HolyWisp logs; the build goes to `<E2E_RESULTS_DIR>/dist` (or `E2E_DI
 | `E2E_BLOCKER_TRANSPORT` | `libcurl` | `epoxy`: `blocker-network` and `blocker-uv` open their driver pages with the epoxy transport (WAVE-B3 §12.4 "once more with epoxy"); every row records it |
 | `TMPDIR` | the system's | Playwright puts browser profiles under `os.tmpdir()`: point it off a RAM `/tmp` for long runs |
 
+## Wave D suites
+
+| Suite | Switch | Needs | What |
+| --- | --- | --- | --- |
+| `cookie-flood.mjs` (+ `flood-lib.mjs`), standalone | `GNOME_E2E_FLOOD=1` (otherwise one skip row) | the release `gnome-server`, both browsers | CF1–CF4, CF9: a proxied page plants cookies for the app; the app keeps working on two ports and behind a Node HTTPS front with a 4 MiB head limit. CF5–CF8 are not written |
+| `build-release.mjs`, standalone | – (run it directly: `node tests/e2e/engine/suites/build-release.mjs [--dist <release dist>]`) | Node, a release build | BR1–BR8: postbuild's siblings, manifests, notices, no vendor maps; BR9 skipped |
+| `backend-proxy.mjs` part `oversized` | – | – | the Wave D head limits (431 over the connection's cap) |
+
+The deploy suites of WAVE-D §5.8 (`deploy-*.mjs`, `GNOME_E2E_DEPLOY=1`) are not written yet; `deployment/check.sh`,
+`deployment/tests/*.sh` and a shell smoke of the compose stack stand in.
+
 ## Writing a suite
 
 One file per suite in `suites/`, named after the owning lane (`host-*` lane a, `sw`/`transport`/`build` lane b,

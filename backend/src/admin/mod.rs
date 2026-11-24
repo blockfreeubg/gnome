@@ -142,6 +142,7 @@ struct DbStats {
     users: i64,
     user_sessions: i64,
     schema_versions: Vec<i64>,
+    sync_bytes_total: i64,
 }
 
 async fn db_stats(state: &AppState) -> Result<DbStats, ApiError> {
@@ -153,7 +154,13 @@ async fn db_stats(state: &AppState) -> Result<DbStats, ApiError> {
                 .prepare_cached("SELECT version FROM schema_migrations ORDER BY version")?
                 .query_map([], |r| r.get(0))?
                 .collect::<Result<Vec<i64>, _>>()?;
-            Ok(DbStats { users: users::count(c)?, user_sessions: sessions::count_active(c, now)?, schema_versions })
+            let sync_bytes_total: i64 = c.query_row("SELECT bytes FROM sync_totals WHERE id = 1", [], |r| r.get(0))?;
+            Ok(DbStats {
+                users: users::count(c)?,
+                user_sessions: sessions::count_active(c, now)?,
+                schema_versions,
+                sync_bytes_total,
+            })
         })
         .await
 }
@@ -203,8 +210,41 @@ pub async fn collect(state: &AppState) -> Result<Diagnostics, ApiError> {
             "users": db.users,
             "user_sessions": db.user_sessions,
             "schema_versions": db.schema_versions,
+            "sync_bytes_total": db.sync_bytes_total,
+            "sync_quota_bytes": u64::from(c.sync_quota_mb) * 1024 * 1024,
+            "sync_total_bytes": u64::from(c.sync_total_mb) * 1024 * 1024,
         }),
     );
+    // WAVE-D §6.3: connection caps, in-flight caps, the large-head budget.
+    let l = &state.limits;
+    let lc = &m.limits;
+    let get = crate::metrics::LimitCounters::get;
+    d.insert(
+        "connections".into(),
+        json!({
+            "max": l.max_connections,
+            "effective": l.effective,
+            "active": l.active(),
+            "per_ip_max": l.per_ip_max(),
+            "inflight_per_ip_max": l.inflight_per_ip_max(),
+            "refused": {"per_ip": get(&lc.refused_per_ip)},
+            "inflight_refused": lc.inflight_refused_total(),
+            "large_head": {
+                "budget_bytes": l.head_budget.cap(),
+                "used_bytes": l.head_budget.used(),
+                "refused": get(&lc.large_head_refused),
+            },
+            "answer_budget": {
+                "budget_bytes": l.answer_budget.cap(),
+                "used_bytes": l.answer_budget.used(),
+                "refused": get(&lc.answer_refused),
+            },
+            "overflow_answered": get(&lc.overflow_answered),
+            "cap_full_seconds": l.cap_full_seconds(m),
+            "wisp_share": l.wisp_share(),
+        }),
+    );
+    d.insert("proxy_trust".into(), json!({"untrusted_https_requests": get(&lc.untrusted_https)}));
     // Replaced by the games module's `CatalogStats` when the catalog is enabled.
     d.insert("catalog".into(), json!({"games": 0, "listed": 0, "by_source": {}, "last_import": null}));
     d.insert("filters".into(), json!([]));
@@ -254,6 +294,15 @@ pub async fn collect(state: &AppState) -> Result<Diagnostics, ApiError> {
             "wisp_ticket_ttl_s": c.wisp_ticket_ttl_s,
             "max_ws_per_ip": c.max_ws_per_ip,
             "max_ws_per_session": c.max_ws_per_session,
+            "max_connections": c.max_connections,
+            "max_conns_per_ip": c.max_conns_per_ip,
+            "max_inflight_per_ip": c.max_inflight_per_ip,
+            "max_inflight_head_mb": c.max_inflight_head_mb,
+            "sync_quota_mb": c.sync_quota_mb,
+            "sync_total_mb": c.sync_total_mb,
+            "cookie_hygiene": c.cookie_hygiene.as_str(),
+            "secret_files": c.secret_files.keys().collect::<Vec<_>>(),
+            "source_url": c.source_url.is_some(),
             "vpn_profiles": c.profiles.iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
             "trusted_proxies": c.trusted_proxies.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "admin_token": c.admin_token.is_some(),
@@ -338,6 +387,10 @@ async fn metrics(State(state): State<AppState>) -> Result<Response, ApiError> {
     let _ = writeln!(w, "# HELP gnome_users Registered user accounts.");
     let _ = writeln!(w, "# TYPE gnome_users gauge");
     let _ = writeln!(w, "gnome_users {}", db.users);
+    let _ =
+        writeln!(w, "# HELP gnome_sync_bytes Stored sync bytes of all accounts (GNOME_SYNC_TOTAL_MB counts these).");
+    let _ = writeln!(w, "# TYPE gnome_sync_bytes gauge");
+    let _ = writeln!(w, "gnome_sync_bytes {}", db.sync_bytes_total);
     let _ = writeln!(w, "# HELP gnome_user_sessions Active signed-in sessions.");
     let _ = writeln!(w, "# TYPE gnome_user_sessions gauge");
     let _ = writeln!(w, "gnome_user_sessions {}", db.user_sessions);

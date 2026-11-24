@@ -1,0 +1,81 @@
+# gnome-server for the release artifact (WAVE-D §5.4, D17): /usr/local/bin/gnome-server (static musl) with the release
+# dist/ at /usr/local/share/gnome/dist, behind Caddy on the same host (route B, docs/DEPLOYMENT.md).
+#
+# Minimum systemd versions: ProtectProc/ProcSubset 247, SocketBindAllow/SocketBindDeny 249, RestartSteps/
+# RestartMaxDelaySec 254. systemd 252 (Debian 12, Raspberry Pi OS bookworm) ignores the 254 keys with a warning: the
+# restart delay then stays at RestartSec=2s instead of growing to 60 s.
+#
+# Install: /etc/gnome/gnome.env (0600 root, from gnome.env.example; no secrets in it) and, for each secret, a drop-in
+# from gnome-server.service.d/credentials.conf.example (the admin token belongs to the first install).
+[Unit]
+Description=GNOME web proxy platform server
+Documentation=file:///usr/local/share/doc/gnome/DEPLOYMENT.md
+After=network-online.target holywisp.service
+Wants=network-online.target holywisp.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+EnvironmentFile=/etc/gnome/gnome.env
+Environment=GNOME_DATA_DIR=%S/gnome
+Environment=GNOME_STATIC_DIR=/usr/local/share/gnome/dist
+Environment=GNOME_ADMIN_BIND=127.0.0.1:9091
+Environment=GNOME_LOG_FORMAT=json
+ExecStartPre=/usr/local/bin/gnome-server config check
+ExecStart=/usr/local/bin/gnome-server serve
+# No ExecReload: static files and configuration are read at start; restart instead.
+Restart=always
+RestartSec=2s
+RestartSteps=6
+RestartMaxDelaySec=60s
+RestartPreventExitStatus=2
+TimeoutStopSec=20s
+
+# Identity and limits
+DynamicUser=yes
+StateDirectory=gnome
+StateDirectoryMode=0700
+UMask=0077
+LimitNOFILE=65536
+MemoryMax=1G
+TasksMax=1024
+
+# Sandbox (HolyWisp's set, plus AF_UNIX for the splice probe and Tokio's signal driver)
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+KeyringMode=private
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# @resources stays allowed until the syscall trace (deployment/tests/syscalls.sh) shows it is unused.
+SystemCallFilter=~@privileged @obsolete @cpu-emulation @swap @reboot @mount @debug @raw-io
+SystemCallErrorNumber=EPERM
+# Listening ports: the app (GNOME_BIND), proxy (GNOME_PROXY_BIND) and admin listeners. Edit both lines together
+# when you change the ports in /etc/gnome/gnome.env.
+SocketBindAllow=tcp:8080
+SocketBindAllow=tcp:8081
+SocketBindAllow=tcp:9091
+SocketBindDeny=any
+
+[Install]
+WantedBy=multi-user.target

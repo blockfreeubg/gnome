@@ -2,6 +2,7 @@
 name = "gnome-net"
 description = "SSRF-safe outbound HTTP client and IP policy shared by GNOME services"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

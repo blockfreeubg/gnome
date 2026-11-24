@@ -53,7 +53,7 @@ const CONFIG = {
   features: { accounts: true, sync: true, games: true, vpn_gateway: false, thumb_proxy: true },
   wisp: { path: '/wisp/', ticket_ttl_s: 86400, profiles: [], custom_servers: true },
   engines: { default: 'scramjet', scramjet: true, ultraviolet: true },
-  proxy: { origin: 'http://127.0.0.1:8081', isolated: true },
+  proxy: { origin: 'http://127.0.0.1:8081', isolated: true, cookieHygiene: 'app' },
   source_url: null,
   limits: { max_ws_per_session: 16 },
 };
@@ -224,7 +224,7 @@ describe('getConfig', () => {
     mockFetch(() => json(200, older));
     const cfg = await getConfig();
     expect(cfg.wisp).toEqual({ path: '/wisp/', ticket_ttl_s: 3600, profiles: [], custom_servers: false });
-    expect(cfg.proxy).toEqual({ origin: 'http://127.0.0.1:8080', isolated: false });
+    expect(cfg.proxy).toEqual({ origin: 'http://127.0.0.1:8080', isolated: false, cookieHygiene: 'app' });
 
     mockFetch(() => json(200, { version: '0.0.9', access_mode: 'code', features: {} }));
     const minimal = await getConfig();
@@ -233,7 +233,7 @@ describe('getConfig', () => {
       features: { accounts: false, sync: false, games: false, vpn_gateway: false, thumb_proxy: false },
       wisp: { path: '/wisp/', ticket_ttl_s: 3600, profiles: [] },
       engines: { default: 'scramjet', scramjet: true, ultraviolet: true },
-      proxy: { origin: null, isolated: false },
+      proxy: { origin: null, isolated: false, cookieHygiene: 'app' },
       source_url: null,
       limits: { max_ws_per_session: 16 },
     });

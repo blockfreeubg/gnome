@@ -1,0 +1,10 @@
+{
+  "name": "gnome-bench-wispjs",
+  "private": true,
+  "description": "Benchmark-only: the pinned @mercuryworkshop/wisp-js server (docs/WAVE-D.md §3.1). Never shipped.",
+  "type": "module",
+  "license": "LGPL-3.0-or-later",
+  "dependencies": {
+    "@mercuryworkshop/wisp-js": "0.5.3"
+  }
+}

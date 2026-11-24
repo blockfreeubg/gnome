@@ -19,6 +19,7 @@ pub mod filters;
 pub mod games;
 pub mod gateway;
 pub mod jobs;
+pub mod limits;
 pub mod metrics;
 pub mod module;
 pub mod observability;

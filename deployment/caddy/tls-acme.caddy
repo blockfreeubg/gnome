@@ -1,0 +1,5 @@
+# TLS through ACME (GNOME_TLS_MODE=acme, the default): Caddy obtains and renews the certificates itself.
+# ACME_EMAIL (required in this mode) is the ACME account address.
+(tls) {
+	tls {$ACME_EMAIL}
+}

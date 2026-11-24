@@ -1,0 +1,104 @@
+{
+ "comment": "WAVE-D D27: every shipped copyleft or MPL package@version -> its upstream repository, the exact commit and that commit's git tree hash. verified=false means nobody has matched the published npm files against an upstream commit yet: scripts/release.sh then fails unless --allow-missing-source \"<reason>\" (needs a decisions-log row) or --no-third-party-source (never for a published release). Ultraviolet is treated as AGPL-3.0 (its LICENSE file).",
+ "packages": {
+  "@mercuryworkshop/scramjet@2.0.67-alpha.2": {
+   "license": "AGPL-3.0-only",
+   "repository": "https://github.com/MercuryWorkshop/scramjet",
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "scramjet"
+  },
+  "@mercuryworkshop/scramjet-controller@0.0.14": {
+   "license": "AGPL-3.0-only",
+   "repository": "https://github.com/MercuryWorkshop/scramjet (packages/controller)",
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "scramjet-controller"
+  },
+  "@mercuryworkshop/libcurl-transport@2.0.6": {
+   "license": "AGPL-3.0-only",
+   "repository": "https://github.com/MercuryWorkshop/libcurl-transport",
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "libcurl-transport"
+  },
+  "@mercuryworkshop/epoxy-transport@3.0.2": {
+   "license": "AGPL-3.0-only",
+   "repository": "https://github.com/MercuryWorkshop/epoxy-transport",
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "epoxy-transport"
+  },
+  "@titaniumnetwork-dev/ultraviolet@3.2.10": {
+   "license": "AGPL-3.0",
+   "repository": "https://github.com/titaniumnetwork-dev/Ultraviolet",
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "ultraviolet"
+  },
+  "@mercuryworkshop/bare-mux@2.1.9": {
+   "license": "MIT",
+   "repository": null,
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "bare-mux"
+  },
+  "libcurl-transport-bare@1.5.2": {
+   "license": "AGPL-3.0-only",
+   "repository": null,
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "libcurl-transport-bare"
+  },
+  "epoxy-transport-bare@2.1.29": {
+   "license": "AGPL-3.0-only",
+   "repository": null,
+   "commit": null,
+   "tree": null,
+   "verified": false,
+   "vendorDir": "epoxy-transport-bare"
+  },
+  "libcurl.js@0.7.5": {
+   "license": "LGPL-3.0-or-later",
+   "repository": "https://github.com/ading2210/libcurl.js",
+   "commit": null,
+   "tree": null,
+   "verified": false
+  },
+  "@mercuryworkshop/epoxy-tls@2.1.20-1": {
+   "license": "AGPL-3.0-only",
+   "repository": "https://github.com/MercuryWorkshop/epoxy-tls",
+   "commit": null,
+   "tree": null,
+   "verified": false
+  },
+  "@ghostery/adblocker@2.20.3": {
+   "license": "MPL-2.0",
+   "repository": "https://github.com/ghostery/adblocker",
+   "commit": null,
+   "tree": null,
+   "verified": false
+  },
+  "@ghostery/adblocker-content@2.20.3": {
+   "license": "MPL-2.0",
+   "repository": "https://github.com/ghostery/adblocker",
+   "commit": null,
+   "tree": null,
+   "verified": false
+  },
+  "@ghostery/adblocker-extended-selectors@2.20.3": {
+   "license": "MPL-2.0",
+   "repository": "https://github.com/ghostery/adblocker",
+   "commit": null,
+   "tree": null,
+   "verified": false
+  }
+ }
+}

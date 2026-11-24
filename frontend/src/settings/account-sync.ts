@@ -62,6 +62,37 @@ function setSync(status: Partial<SyncStatus>): void {
   });
 }
 
+/** A `413 quota_exceeded` answer (WAVE-D D20): whose storage is full, and how full. */
+export interface QuotaRefusal {
+  scope: 'account' | 'server';
+  usedBytes: number | null;
+  quotaBytes: number | null;
+}
+
+/** The refusal in a sync error, or null. `quota_exceeded` is read from the body (lib/api maps a 413 to its status code). */
+export function quotaRefusal(err: unknown): QuotaRefusal | null {
+  if (!isApiError(err) || (err as ApiError).status !== 413) return null;
+  const body = (err as ApiError).body as { error?: { code?: unknown }; scope?: unknown; used_bytes?: unknown; quota_bytes?: unknown } | null;
+  if (!body || typeof body !== 'object' || body.error?.code !== 'quota_exceeded') return null;
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return { scope: body.scope === 'server' ? 'server' : 'account', usedBytes: num(body.used_bytes), quotaBytes: num(body.quota_bytes) };
+}
+
+const mb = (n: number): string => `${(n / (1024 * 1024)).toFixed(1)} MB`;
+
+/** What Settings shows for a kind stopped by a quota refusal. */
+export function quotaMessage(q: QuotaRefusal): string {
+  if (q.scope === 'server') return "This server's sync storage is full. Try again later or ask its operator.";
+  const amount = q.usedBytes !== null && q.quotaBytes !== null ? ` (${mb(q.usedBytes)} of ${mb(q.quotaBytes)})` : '';
+  return `Sync storage on this server is full${amount}. Delete bookmarks or turn off history sync to continue.`;
+}
+
+/**
+ * Kinds whose sync stopped on a quota refusal, with the message. A stopped kind is not sent again until it changes
+ * locally (e.g. bookmarks were deleted) or the app starts again; the other kinds go on.
+ */
+const quotaStopped = new Map<'settings' | RecordKind, string>();
+
 let running: Promise<void> | null = null;
 let rerun = false;
 const dirty = new Set<'settings' | RecordKind>();
@@ -100,6 +131,7 @@ async function runOnce(): Promise<void> {
     return;
   }
   setSync({ state: 'syncing', error: null });
+  const changed = new Set(dirty);
   dirty.clear();
   // Each kind has its own try: a failure of one (e.g. the server's bookmark cap) must not stop the others. Two kinds
   // of failure do stop the run: the session ended (nothing else can sync either), and the server is unreachable (no
@@ -116,6 +148,13 @@ async function runOnce(): Promise<void> {
         void account.refresh().catch(() => {});
         setSync({ state: 'signed-out', error: null });
         return 'signed-out';
+      }
+      const quota = quotaRefusal(err);
+      if (quota) {
+        const message = quotaMessage(quota);
+        quotaStopped.set(kind, message);
+        failures.push({ kind, err: new Error(message) });
+        return 'next';
       }
       failures.push({ kind, err });
       return serverUnreachable(err) ? 'stop' : 'next';
@@ -150,6 +189,12 @@ async function runOnce(): Promise<void> {
     ]);
   }
   for (const [kind, run] of steps) {
+    const stopped = quotaStopped.get(kind);
+    if (stopped !== undefined && !changed.has(kind)) {
+      failures.push({ kind, err: new Error(stopped) });
+      continue;
+    }
+    quotaStopped.delete(kind);
     const next = await attempt(kind, run);
     if (next === 'signed-out') return;
     if (next === 'stop') break;

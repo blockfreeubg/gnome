@@ -24,6 +24,7 @@ export type ServerErrorCode =
   | 'method_not_allowed'
   | 'conflict'
   | 'payload_too_large'
+  | 'quota_exceeded'
   | 'rate_limited'
   | 'access_code_required'
   | 'login_required'
@@ -44,6 +45,7 @@ export const SERVER_ERROR_CODES: ReadonlySet<string> = new Set<ServerErrorCode>(
   'method_not_allowed',
   'conflict',
   'payload_too_large',
+  'quota_exceeded',
   'rate_limited',
   'access_code_required',
   'login_required',
@@ -296,7 +298,7 @@ export interface ServerConfig {
    * Origin that serves the engine host (`/engine/`) and Wisp; equals the app origin when `isolated` is false, and is
    * `null` when the server cannot tell which origin the request used.
    */
-  proxy: { origin: string | null; isolated: boolean };
+  proxy: { origin: string | null; isolated: boolean; cookieHygiene: 'app' | 'registrable' };
   /** AGPL §13 source offer; only ever an http(s) URL (anything else is dropped). */
   source_url: string | null;
   limits: { max_ws_per_session: number };
@@ -375,7 +377,11 @@ export function normalizeServerConfig(c: ServerConfig): ServerConfig {
       custom_servers: flag(wisp.custom_servers),
     },
     engines: { default: engineDefault, scramjet: flag(engines.scramjet, true), ultraviolet: flag(engines.ultraviolet, true) },
-    proxy: { origin: originOrNull(proxy.origin), isolated: flag(proxy.isolated) },
+    proxy: {
+      origin: originOrNull(proxy.origin),
+      isolated: flag(proxy.isolated),
+      cookieHygiene: proxy.cookieHygiene === 'registrable' ? 'registrable' : 'app',
+    },
     source_url: httpUrlOrNull(raw.source_url),
     limits: { max_ws_per_session: posInt(obj(raw.limits).max_ws_per_session, CONFIG_DEFAULTS.maxWsPerSession) },
   };

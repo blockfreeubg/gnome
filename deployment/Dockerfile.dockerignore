@@ -1,0 +1,30 @@
+# Build context of deployment/Dockerfile (the repository root): only what its stages COPY (WAVE-D §5.1).
+# deployment/check.sh asserts the deny lines below.
+*
+!Cargo.toml
+!Cargo.lock
+!LICENSE
+!backend/
+!crates/
+!database/
+!frontend/
+!scripts/
+# Never in the context, also inside admitted directories:
+**/node_modules/
+frontend/dist/
+**/.env*
+!**/.env.example
+deployment/secrets/
+**/*.pem
+**/*.key
+**/secret.key
+**/*.db*
+**/test-results/
+**/playwright-report/
+target/
+**/target/
+data/
+release/
+.claude/
+**/.claude/
+services/holywisp/build/

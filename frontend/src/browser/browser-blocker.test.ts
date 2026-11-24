@@ -35,7 +35,7 @@ const config: ServerConfig = {
   features: { accounts: false, sync: false, games: false, vpn_gateway: false, thumb_proxy: false },
   wisp: { path: '/wisp/', ticket_ttl_s: 3600, profiles: [], custom_servers: false },
   engines: { default: 'scramjet', scramjet: true, ultraviolet: true },
-  proxy: { origin: FAKE_PROXY_ORIGIN, isolated: true },
+  proxy: { origin: FAKE_PROXY_ORIGIN, isolated: true, cookieHygiene: 'app' },
   source_url: null,
   limits: { max_ws_per_session: 16 },
 };

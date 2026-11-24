@@ -77,10 +77,14 @@ pub fn secure_for(mode: CookieSecure, client: &ClientInfo) -> bool {
 }
 
 /// `Set-Cookie` value. `value` must consist of cookie-octets (our tokens are base64url, digits and dots).
+/// `Priority=High` (WAVE-D D19 (2)): Chromium evicts lower-priority cookies first when a site passes 180 cookies, so
+/// cookies planted by a proxied page push out each other before GNOME's sessions (Firefox ignores the attribute).
 pub fn set(name: &str, value: &str, max_age_s: u64, secure: bool) -> HeaderValue {
     let secure = if secure { "; Secure" } else { "" };
-    HeaderValue::from_str(&format!("{name}={value}; Max-Age={max_age_s}; Path=/; HttpOnly; SameSite=Strict{secure}"))
-        .expect("cookie values are ASCII")
+    HeaderValue::from_str(&format!(
+        "{name}={value}; Max-Age={max_age_s}; Path=/; HttpOnly; SameSite=Strict; Priority=High{secure}"
+    ))
+    .expect("cookie values are ASCII")
 }
 
 /// `Set-Cookie` value that deletes the cookie.
@@ -128,9 +132,18 @@ mod tests {
     #[test]
     fn attributes() {
         let v = set("__Host-gnome_sid", "v1.1.a.b", 2_592_000, true);
-        assert_eq!(v, "__Host-gnome_sid=v1.1.a.b; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict; Secure");
+        assert_eq!(
+            v,
+            "__Host-gnome_sid=v1.1.a.b; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict; Priority=High; Secure"
+        );
         let c = clear("gnome_auth", false);
-        assert_eq!(c, "gnome_auth=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict");
+        assert_eq!(c, "gnome_auth=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict; Priority=High");
+        for secure in [true, false] {
+            for name in ["gnome_sid", "gnome_auth"] {
+                let v = set(name, "x", 1, secure);
+                assert!(v.to_str().unwrap().contains("; Priority=High"), "{v:?}");
+            }
+        }
         assert_eq!(set_cookie_name(&c), Some("gnome_auth"));
         let https = ClientInfo { https: true, ..ClientInfo::unknown() };
         assert!(secure_for(CookieSecure::Auto, &https));

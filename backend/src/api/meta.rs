@@ -38,6 +38,10 @@ pub struct ProxyInfo {
     pub origin: Option<String>,
     /// Whether proxied pages are isolated on their own origin. `false` = single-origin mode.
     pub isolated: bool,
+    /// Which foreign cookies the app removes in two-origin mode: `"app"` or `"registrable"` (`GNOME_COOKIE_HYGIENE`,
+    /// WAVE-D D19 (3)).
+    #[serde(rename = "cookieHygiene")]
+    pub cookie_hygiene: &'static str,
 }
 
 /// What `/admin/diagnostics`, `config check` and the startup log say about proxy isolation in single-origin mode.
@@ -154,7 +158,11 @@ pub fn public_config(state: &AppState, client: &ClientInfo) -> PublicConfig {
             scramjet: c.engines.scramjet,
             ultraviolet: c.engines.ultraviolet,
         },
-        proxy: ProxyInfo { origin: origins::proxy_origin(c, client), isolated: c.proxy.isolated() },
+        proxy: ProxyInfo {
+            origin: origins::proxy_origin(c, client),
+            isolated: c.proxy.isolated(),
+            cookie_hygiene: c.cookie_hygiene.as_str(),
+        },
         source_url: c.source_url.clone(),
         limits: Limits { max_ws_per_session: c.max_ws_per_session },
     };

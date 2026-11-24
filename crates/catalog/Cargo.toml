@@ -2,6 +2,7 @@
 name = "gnome-catalog"
 description = "GNOME game catalog: schema, legitimate-source importers, search"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

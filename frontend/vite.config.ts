@@ -109,7 +109,10 @@ const apiProxy = { '/api': { target: BACKEND, changeOrigin: false } };
  * import graphs with it: the Vite manifest names chunks, not the modules inside them. Dot-directories are never
  * served by gnome-server.
  */
-function chunkGraph(): Plugin {
+/** Chunk graphs of the worker bundles of the current build (filled by `chunkGraph(…, true)` in `worker.plugins`). */
+const workerGraph: Record<string, unknown> = {};
+
+export function chunkGraph(fileName = '.vite/gnome-chunks.json', direct = false): Plugin {
   const rel = (id: string | null): string | null => {
     if (id === null) return null;
     if (id.startsWith('\0')) return id;
@@ -133,7 +136,17 @@ function chunkGraph(): Plugin {
           modules: c.moduleIds.map(rel),
         };
       }
-      this.emitFile({ type: 'asset', fileName: '.vite/gnome-chunks.json', source: `${JSON.stringify(chunks, null, 1)}\n` });
+      if (direct) {
+        // A worker bundle (WAVE-D §4.6): built while the main build transforms its importer, before Vite empties and
+        // writes the output, so its graph is kept here and the main build emits it as .vite/gnome-worker-chunks.json.
+        Object.assign(workerGraph, chunks);
+        return;
+      }
+      this.emitFile({ type: 'asset', fileName, source: `${JSON.stringify(chunks, null, 1)}\n` });
+      if (fileName === '.vite/gnome-chunks.json' && Object.keys(workerGraph).length) {
+        const sorted = Object.fromEntries(Object.keys(workerGraph).sort().map((k) => [k, workerGraph[k]]));
+        this.emitFile({ type: 'asset', fileName: '.vite/gnome-worker-chunks.json', source: `${JSON.stringify(sorted, null, 1)}\n` });
+      }
     },
   };
 }
@@ -202,7 +215,8 @@ export default defineConfig(({ mode }) => ({
     },
   },
   // The content blocker's builder Worker (src/extensions/worker/builder.worker.ts, WAVE-B3 D8): a module Worker.
-  worker: { format: 'es' as const },
+  // Its chunk graph goes to .vite/gnome-worker-chunks.json (the third-party notices and bundle-report read it).
+  worker: { format: 'es' as const, plugins: () => [chunkGraph('.vite/gnome-worker-chunks.json', true)] },
   test: {
     include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
     environment: 'node',

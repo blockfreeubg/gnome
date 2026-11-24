@@ -13,8 +13,10 @@
 //              nothing), with a control page without a policy that does reach it; with the custom-Wisp opt-in the
 //              engine host and the bare-mux worker URL can open ws: (documented) and nothing else changes
 //   oversized  hyper's own answers to request heads it cannot parse (414 for a request target of 64 KiB or more, 431 for
-//              a head over its read buffer: a long URL or a cookie bomb) carry default-src 'none' + frame-ancestors
-//              'none', and a hidden frame of them gives escaped code no realm that reaches the sentinel
+//              a head over its read buffer: since WAVE-D D19 1 MiB for loopback peers on the proxy listener, so a
+//              1.9 MB query in Chromium, a 900 KB query plus 40 cookies of 3.9 KB in Firefox) carry default-src 'none' +
+//              frame-ancestors 'none', and a hidden frame of them gives escaped code no realm that reaches the
+//              sentinel; a 156 KB cookie bomb now gets the proxy origin's normal 404 with proxyInertCsp (no realm either)
 //   worker     the real bare-mux SharedWorker's own realm (code injected through its `set` message, as any
 //              same-origin client can): fetch, importScripts and import() towards the sentinel stay blocked; a
 //              WebSocket to it is blocked without the custom-Wisp opt-in and opens with it (both worker policies)
@@ -304,18 +306,23 @@ async function realm(ctx, sentinel, { customWisp }) {
  * from that realm reached the sentinel in Chromium; Firefox showed an opaque error page). Now they carry
  * `default-src 'none' … frame-ancestors 'none'`, so no browser renders them in a frame.
  */
+// [label, url(browser), cookies to plant first, the answer: 'automatic' (414/431, strict policy) or 'normal' (404, proxyInertCsp)]
 const OVERSIZED = [
-  ['431 long query (140 KB)', () => `/x?${'a'.repeat(140_000)}`, false],
-  ['414 long path (66 KB)', () => `/${'a'.repeat(66_000)}`, false],
-  ['431 cookie bomb (40 cookies of 3.9 KB)', () => '/nope', true],
+  // WAVE-D D19: the proxy listener reads up to 1 MiB of head from loopback peers; Firefox's URLs stop at 1 MiB, so it
+  // reaches the limit with a 900 KB query plus 40 cookies.
+  ['431 head over 1 MiB (long query)', (b) => `/x?${'a'.repeat(b === 'firefox' ? 900_000 : 1_900_000)}`, (b) => (b === 'firefox' ? 40 : 0), 'automatic'],
+  ['414 long path (66 KB)', () => `/${'a'.repeat(66_000)}`, () => 0, 'automatic'],
+  ['cookie bomb (40 cookies of 3.9 KB, 156 KB): the normal 404', () => '/nope', () => 40, 'normal'],
 ];
 const NOTHING_RUNS_UNFRAMED = "default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 async function oversized(ctx, sentinel) {
   const { record, stack } = ctx;
+  const inert = (await loadContract()).proxyInertCsp(stack.appOrigins ?? [stack.appOrigin]);
   const browser = await ctx.launch();
   try {
-    for (const [label, url, bomb] of OVERSIZED) {
+    for (const [label, url, bombOf, answer] of OVERSIZED) {
+      const bomb = bombOf(ctx.browser);
       const context = await browser.newContext();
       const page = await context.newPage();
       const id = `oversized-${ctx.browser}-${label.replace(/\W+/g, '_')}-${Date.now()}`;
@@ -323,7 +330,7 @@ async function oversized(ctx, sentinel) {
       try {
         // The engine-host document at top level stands in for escaped code (its policy may frame same-origin URLs).
         await page.goto(`${stack.proxyOrigin}/engine/`, { waitUntil: 'domcontentloaded' });
-        if (bomb) await page.evaluate(() => { for (let i = 0; i < 40; i++) document.cookie = `gnome-e2e-bomb${i}=${'c'.repeat(3900)}; path=/`; });
+        if (bomb) await page.evaluate((n) => { for (let i = 0; i < n; i++) document.cookie = `gnome-e2e-bomb${i}=${'c'.repeat(3900)}; path=/`; }, bomb);
         r = await page.evaluate(async ([u, target, tag]) => {
           const out = await fetch(u, { cache: 'no-store' }).then(
             (res) => ({ status: res.status, csp: res.headers.get('content-security-policy') }),
@@ -348,15 +355,17 @@ async function oversized(ctx, sentinel) {
           try { const sock = new w.WebSocket(`${target.replace(/^http/, 'ws')}/ws?${tag}`); sock.onerror = () => {}; } catch { /* blocked */ }
           try { w.navigator.sendBeacon(`${target}/beacon?${tag}`, 'x'); } catch { /* blocked */ }
           return out;
-        }, [url(), sentinel.origin, id]);
+        }, [url(ctx.browser), sentinel.origin, id]);
       } catch (e) {
         r = { error: String(e.message || e).slice(0, 160) };
       }
       await sleep(1500);
       const hits = [...new Set(sentinel.hits.filter((h) => h.path.includes(id)).map((h) => h.path.split('?')[0]))];
-      const ok = !r.error && [414, 431].includes(r.status) && r.csp === NOTHING_RUNS_UNFRAMED && hits.length === 0;
+      const shape =
+        answer === 'automatic' ? [414, 431].includes(r.status) && r.csp === NOTHING_RUNS_UNFRAMED : r.status === 404 && r.csp === inert;
+      const ok = !r.error && shape && hits.length === 0;
       record({
-        test: `oversized: hyper's own answer to a ${label} is no permissive realm`,
+        test: `oversized: the answer to a ${label} is no permissive realm`,
         result: ok ? 'pass' : 'fail',
         notes: `${JSON.stringify(r)}; sentinel saw ${JSON.stringify(hits)}`,
       });

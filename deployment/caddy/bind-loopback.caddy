@@ -1,0 +1,2 @@
+# Test suites only: listen on 127.0.0.1 (WAVE-D §0 loopback rule).
+default_bind 127.0.0.1

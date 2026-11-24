@@ -1,0 +1,85 @@
+# VPN egress override (WAVE-D §5.2): recipe A of services/vpn/README.md inside the GNOME stack.
+#
+#   docker compose -f deployment/compose.yml -f deployment/compose.vpn.yml up -d
+#
+# Needs a VPN account; read services/vpn/README.md first (key handling, exits, profiles.toml). Checked statically
+# only (deployment/check.sh); never started by GNOME's tests. Put in deployment/:
+#   secrets/wireguard_private_key (0600, this deployment's own WireGuard key), vpn/egress/<id>.conf, vpn/profiles.toml,
+#   and in .env: WIREGUARD_ADDRESSES, GLUETUN_SERVER_CITIES, GLUETUN_API_KEY.
+#
+# gluetun is the one documented exception to the stack's container policy: Docker's default capabilities plus
+# NET_ADMIN and /dev/net/tun (its documented requirement, never `privileged`), a writable root (it writes its own
+# state), no-new-privileges, memory and process limits.
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?the IPv4 Address of this deployment's WireGuard key}
+      SERVER_CITIES: ${GLUETUN_SERVER_CITIES:?gluetun city name of the tunnel relay, e.g. Gothenburg}
+      HTTP_CONTROL_SERVER_ADDRESS: ":8000"
+      HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE: '{"auth":"apikey","apikey":"${GLUETUN_API_KEY:?generate with gluetun genkey}"}'
+      PUBLICIP_ENABLED: "false"
+      UPDATER_PERIOD: "168h"
+    secrets: [wireguard_private_key]
+    mem_limit: 256m
+    pids_limit: 256
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    networks:
+      gnome-egress:
+        ipv4_address: ${GNOME_NET_PREFIX:-172.30}.64.2
+
+  holywisp-se-got:
+    image: ${GNOME_HOLYWISP_IMAGE:-gnome-holywisp:0.1.0-e0a0f15}
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun: { condition: service_healthy }
+    command: ["--config", "/etc/holywisp/egress/se-got.conf"]
+    volumes: ["./vpn/egress/se-got.conf:/etc/holywisp/egress/se-got.conf:ro"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ulimits: { nofile: { soft: 65536, hard: 65536 } }
+    mem_limit: 512m
+    pids_limit: 128
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  holywisp-ch-zrh:
+    image: ${GNOME_HOLYWISP_IMAGE:-gnome-holywisp:0.1.0-e0a0f15}
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun: { condition: service_healthy }
+    command: ["--config", "/etc/holywisp/egress/ch-zrh.conf"]
+    volumes: ["./vpn/egress/ch-zrh.conf:/etc/holywisp/egress/ch-zrh.conf:ro"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ulimits: { nofile: { soft: 65536, hard: 65536 } }
+    mem_limit: 512m
+    pids_limit: 128
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  gnome:
+    environment:
+      GNOME_VPN_PROFILES: /etc/gnome/vpn-profiles.toml
+    volumes: ["./vpn/profiles.toml:/etc/gnome/vpn-profiles.toml:ro"]
+    networks:
+      gnome-egress:
+        ipv4_address: ${GNOME_NET_PREFIX:-172.30}.64.10
+
+networks:
+  gnome-egress:
+    ipam:
+      config:
+        - subnet: ${GNOME_NET_PREFIX:-172.30}.64.0/24
+
+secrets:
+  wireguard_private_key:
+    file: ./secrets/wireguard_private_key

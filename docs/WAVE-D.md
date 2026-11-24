@@ -1,5 +1,16 @@
 # Wave D module plan (performance + production)
 
+> **Outcome (2026-11-24, lean run `wf_88dddedd-f89`).** The user asked for a quick, low-usage finish, so the wave
+> ran as four steps (`d-harden` = d4, `d-ship` = d2 + d3, `d-bench` = d1a, `d-final` = §10 lean) without d1b's
+> optimization loop and without the long measurement campaigns. Built: §6 M1–M3 and the audits (d-harden), §4 and §5
+> (d-ship), the §3.1–§3.4 harness with one dev-smoke run (d-bench), and the §10/§11 integration with
+> `START-GUIDE.md` (d-final). Where the code differs from this plan, the lane reports say why; the main points are in
+> PROGRESS's decisions log (rows of 2026-11-24): D10 settled as minify only; a bad sync cursor answers 400, not 422;
+> a quota-stopped kind retries after any local change; untrusted heads over 64 KiB get an exact 431; reproducibility
+> uses the default builder with `--no-cache` (no privileged BuildKit); `Origin-Agent-Cluster` not adopted; the deploy
+> suites (DC/DP/OP), the P-rows, CF5–CF8, the record run, the allocator check and D12 were not done. Everything open is
+> listed in PROGRESS "Deferred items" ("Wave D open items").
+
 > Status: plan for Wave D, written 2026-11-18 (`wave-d:plan`, doc-only) while the UI restyle's final gate was running,
 > before Wave B step 2's integration part 2, Wave B step 3 and Wave C. It builds on the code as it stood that evening:
 > the Rust workspace (`Cargo.toml`: release profile `lto = "fat"`, `codegen-units = 1`, `strip = true`,

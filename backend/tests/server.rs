@@ -19,10 +19,46 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
 async fn roundtrip(addr: SocketAddr, raw: &str) -> String {
-    let mut s = TcpStream::connect(addr).await.unwrap();
-    s.write_all(raw.as_bytes()).await.unwrap();
+    roundtrip_from(addr, raw, "127.0.0.1").await
+}
+
+/// [`roundtrip`] from the source address `src` (127.0.0.2 is outside the default `GNOME_TRUSTED_PROXIES`).
+async fn roundtrip_from(addr: SocketAddr, raw: &str, src: &str) -> String {
+    // When the server refuses a head while the client is still sending it, the close may reset the connection before
+    // the answer is read (TCP discards it on RST); a few attempts get the answer itself, which is what is checked.
+    for _ in 0..4 {
+        let res = roundtrip_once(addr, raw, src).await;
+        if !res.is_empty() {
+            return res;
+        }
+    }
+    String::new()
+}
+
+async fn roundtrip_once(addr: SocketAddr, raw: &str, src: &str) -> String {
+    let sock = tokio::net::TcpSocket::new_v4().unwrap();
+    sock.bind(format!("{src}:0").parse().unwrap()).unwrap();
+    let s = sock.connect(addr).await.unwrap();
+    // Write and read at once: a refused head is answered (and the socket closed) before every byte is written.
+    let (mut rd, mut wr) = s.into_split();
+    let raw = raw.as_bytes().to_vec();
+    let writer = tokio::spawn(async move {
+        let _ = wr.write_all(&raw).await;
+        wr
+    });
     let mut buf = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut buf)).await.expect("response in time").unwrap();
+    let mut chunk = [0u8; 8192];
+    let read = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Ok(n) = rd.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    })
+    .await;
+    assert!(read.is_ok(), "response in time");
+    writer.abort();
     String::from_utf8_lossy(&buf).into_owned()
 }
 
@@ -136,7 +172,9 @@ async fn hypers_own_error_answers_carry_a_strict_policy() {
         ("malformed", "GET /nope HTTP/1.1\r\nHost: p.gnome.test\r\nno colon here\r\n\r\n".to_string(), 400),
         ("app host", format!("GET /x?{} HTTP/1.1\r\nHost: gnome.test\r\n\r\n", "a".repeat(140_000)), 431),
     ] {
-        let res = roundtrip(addr, &raw).await;
+        // WAVE-D D19: heads up to 1 MiB are accepted from trusted peers (loopback by default), so the oversized
+        // cases come from 127.0.0.2, an untrusted peer with the 64 KiB buffer.
+        let res = roundtrip_from(addr, &raw, "127.0.0.2").await;
         assert!(res.starts_with(&format!("HTTP/1.1 {status} ")), "{what}: {res}");
         assert!(res.ends_with(&format!("{strict}\r\n")), "{what}: {res}");
         assert!(
@@ -145,13 +183,38 @@ async fn hypers_own_error_answers_carry_a_strict_policy() {
         );
         assert_eq!(res.matches("content-security-policy").count(), 1, "{what}: {res}");
     }
-    // On a keep-alive connection the answer before it is the service's own, untouched.
+    // The trusted peer (127.0.0.1): the cookie bomb and the long query get the service's own answers; a head over
+    // the 1 MiB buffer still gets the hardened 431.
+    let bomb = format!(
+        "GET /nope HTTP/1.1\r\nHost: p.gnome.test\r\nCookie: {}\r\nConnection: close\r\n\r\n",
+        cookies.join("; ")
+    );
+    let res = roundtrip(addr, &bomb).await;
+    assert!(res.starts_with("HTTP/1.1 404 "), "trusted cookie bomb: {res}");
     let res = roundtrip(
+        addr,
+        &format!("GET /x?{} HTTP/1.1\r\nHost: gnome.test\r\nConnection: close\r\n\r\n", "a".repeat(140_000)),
+    )
+    .await;
+    assert!(!res.starts_with("HTTP/1.1 431 "), "trusted long query: {res}");
+    let huge: Vec<String> = (0..400).map(|i| format!("big{i}={}", "c".repeat(3900))).collect();
+    let res =
+        roundtrip(addr, &format!("GET /nope HTTP/1.1\r\nHost: p.gnome.test\r\nCookie: {}\r\n\r\n", huge.join("; ")))
+            .await;
+    // Refused exactly at the 1 MiB cap by the limits layer (hyper alone would read up to one more buffer first).
+    let lower = res.to_ascii_lowercase();
+    assert!(res.starts_with("HTTP/1.1 431 ") && lower.ends_with("\r\n\r\n"), "1.5 MiB head: {res}");
+    let policy = "content-security-policy: default-src 'none'; form-action 'none'; base-uri 'none'; \
+                  frame-ancestors 'none'\r\n";
+    assert!(lower.contains(policy) && lower.matches("content-security-policy").count() == 1, "{res}");
+    // On a keep-alive connection the answer before it is the service's own, untouched.
+    let res = roundtrip_from(
         addr,
         &format!(
             "GET /api/health HTTP/1.1\r\nHost: p.gnome.test\r\n\r\nGET /x?{} HTTP/1.1\r\nHost: p.gnome.test\r\n\r\n",
             "a".repeat(140_000)
         ),
+        "127.0.0.2",
     )
     .await;
     let (first, second) = res.split_at(res.find("HTTP/1.1 431 ").unwrap_or_else(|| panic!("{res}")));

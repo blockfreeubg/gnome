@@ -1,0 +1,25 @@
+{
+  "$comment": "npm audit policy (WAVE-D D24, docs/AUDIT.md). failOn: severities that fail when a shipped package has them. ignores: [{\"advisory\": \"GHSA-…\" or \"package\": \"name\", \"reason\": \"…\", \"expires\": \"YYYY-MM-DD\" (at most 90 days ahead)}]. installScriptsAllow: packages whose lock entry may have hasInstallScript (\"name\" or \"project:name\"; installs run with --ignore-scripts anyway). licenses: the allow-list of shipped npm packages that frontend/scripts/third-party-notices.mjs enforces.",
+  "failOn": ["high", "critical"],
+  "maxIgnoreDays": 90,
+  "decisionDays": 30,
+  "ignores": [],
+  "installScriptsAllow": ["fsevents", "bench-wispjs:bufferutil"],
+  "licenses": [
+    "MIT",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later"
+  ],
+  "licenseClarifications": { "AGPL-3.0": "AGPL-3.0-only" }
+}
