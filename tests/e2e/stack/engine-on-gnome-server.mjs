@@ -7,7 +7,8 @@
  *
  *   node tests/e2e/stack/engine-on-gnome-server.mjs prepare <dir> <app origin>   # e.g. … /tmp/x http://127.0.0.1:24210
  *   GNOME_STATIC_DIR=<dir> GNOME_BIND=127.0.0.1:24210 GNOME_PROXY_BIND=127.0.0.1:24211 \
- *     GNOME_WISP_UPSTREAM=<holywisp host:port> GNOME_DATA_DIR=<temp dir> target/release/gnome-server serve
+ *     GNOME_WISP_UPSTREAM=<holywisp host:port> GNOME_DATA_DIR=<temp dir> GNOME_CATALOG_REFRESH_HOURS=0 \
+ *     GNOME_OSS_FETCH=manual target/release/gnome-server serve
  *   GNOME_QA_APP=http://127.0.0.1:24210 node tests/e2e/stack/engine-on-gnome-server.mjs
  *
  * `prepare` assembles a GNOME_STATIC_DIR from the spike: the app stub as the SPA (index.html, app.js), the engine host

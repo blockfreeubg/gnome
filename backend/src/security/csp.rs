@@ -30,13 +30,15 @@ pub const SHELL_DIRECTIVES: &[(&str, &[&str])] = &[
     // Single-origin mode adds ws:/wss: (the engines run here and may use the user's own Wisp servers); with a proxy
     // origin the app itself opens no WebSockets.
     ("connect-src", &["'self'"]),
-    // Only the engine host: its origin with a proxy origin, else 'self' (shell_policy). The engine iframe's own
-    // navigations are checked against this list, and escaped proxied code can navigate it (ENGINE-PROTOCOL §1.1), so
-    // nothing else may be on it: no game-embed host (Wave C frames each game through its own wrapper document) and,
-    // with a proxy origin, not the app's own pages either. `blob:`: Firefox checks the engine host's own blob
-    // download (`<a download>` of a page, "Save link as") against this list as a navigation of the engine iframe, and
-    // refused it, so nothing was saved; a blob: URL belongs to the origin that made it, so only proxy-origin blobs,
-    // which keep their creator's strict policy, can load there (no new route).
+    // The engine host (its origin with a proxy origin; 'self' otherwise) and the game wrapper `/play-frame/<slug>`
+    // ('self', WAVE-C D2/D4). The engine iframe's own navigations are checked against this list, and escaped proxied
+    // code can navigate it (ENGINE-PROTOCOL §1.1), so nothing else may be on it: no game-embed host (each game is
+    // framed through its wrapper, whose own policy names that one embed origin) and no other app page can render
+    // framed (the shell sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`; the wrapper runs no script and
+    // frames only its game). `blob:`: Firefox checks the engine host's own blob download (`<a download>` of a page,
+    // "Save link as") against this list as a navigation of the engine iframe, and refused it, so nothing was saved; a
+    // blob: URL belongs to the origin that made it, so only proxy-origin blobs, which keep their creator's strict
+    // policy, can load there (no new route).
     ("frame-src", &["blob:"]),
     ("img-src", &["'self'", "data:", "blob:", "https:"]),
     ("style-src", &["'self'", "'unsafe-inline'"]),
@@ -45,11 +47,16 @@ pub const SHELL_DIRECTIVES: &[(&str, &[&str])] = &[
     ("object-src", &["'none'"]),
     ("base-uri", &["'self'"]),
     ("form-action", &["'self'"]),
-    ("frame-ancestors", &["'self'"]),
+    // Nothing frames the SPA shell (WAVE-C D4).
+    ("frame-ancestors", &["'none'"]),
 ];
 
-/// Policy sent on non-HTML app responses and when the shell policy is off: only forbids cross-origin framing.
+/// Policy sent on non-HTML app responses: only forbids cross-origin framing.
 pub const FRAME_ANCESTORS_ONLY: &str = "frame-ancestors 'self'";
+
+/// What shell HTML gets as its enforced policy in report-only and off modes (non-HTML app answers keep
+/// [`FRAME_ANCESTORS_ONLY`]).
+pub const SHELL_FRAME_ANCESTORS_ONLY: &str = "frame-ancestors 'none'";
 
 /// Policy of answers produced outside the security-headers middleware (hyper's own error answers, a panic caught
 /// outside the middleware; `server::ConnIo`, `router`): nothing runs or loads, and no browser renders it in a frame,
@@ -68,7 +75,8 @@ pub fn shell_policy(proxy: &ProxySetup, script_hashes: &[String]) -> String {
         let extra: Vec<&str> = match *name {
             "script-src" => script_hashes.iter().map(String::as_str).collect(),
             "connect-src" if !proxy.isolated() => vec!["ws:", "wss:"],
-            "frame-src" => vec![proxy.origin().unwrap_or("'self'")],
+            "frame-src" => std::iter::once("'self'").chain(proxy.origin()).collect(),
+            "img-src" => proxy.origin().into_iter().collect(),
             _ => Vec::new(),
         };
         for s in sources.iter().copied().chain(extra) {
@@ -90,7 +98,7 @@ pub struct CspHeaders {
 
 pub fn headers_for(mode: CspMode, proxy: &ProxySetup, script_hashes: &[String]) -> CspHeaders {
     let policy = || header(&shell_policy(proxy, script_hashes));
-    let frame_only = HeaderValue::from_static(FRAME_ANCESTORS_ONLY);
+    let frame_only = HeaderValue::from_static(SHELL_FRAME_ANCESTORS_ONLY);
     match mode {
         CspMode::On => CspHeaders { enforce: policy(), report_only: None },
         CspMode::ReportOnly => CspHeaders { enforce: frame_only, report_only: Some(policy()) },
@@ -101,6 +109,57 @@ pub fn headers_for(mode: CspMode, proxy: &ProxySetup, script_hashes: &[String]) 
 fn header(policy: &str) -> HeaderValue {
     HeaderValue::from_str(policy).expect("CSP is ASCII")
 }
+
+/// The game wrapper's only style (`games::frames::WRAPPER_STYLE`), allowed by its hash.
+pub const WRAPPER_STYLE: &str = "html,body{margin:0;height:100%;overflow:hidden;background:#000}iframe{display:block;width:100%;height:100%;border:0}";
+
+/// `'sha256-…'` of [`WRAPPER_STYLE`].
+pub fn wrapper_style_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| format!("'sha256-{}'", b64_std(&sha256(WRAPPER_STYLE.as_bytes()))))
+}
+
+/// Policy of a game wrapper document (WAVE-C D2), rendered per request by `games::frames`:
+/// `default-src 'none'; frame-src <frame_source>; style-src '<WRAPPER_STYLE hash>'; base-uri 'none';
+/// form-action 'none'; frame-ancestors 'self'`. `frame_source` is `https://<host>[:port]` for a network or developer
+/// embed, `<proxy origin>/oss/<slug>/` for an OSS game; callers pass only values `FramePolicy::allows` accepted.
+pub fn wrapper_csp(frame_source: &str) -> String {
+    format!(
+        "default-src 'none'; frame-src {frame_source}; style-src {}; base-uri 'none'; form-action 'none'; \
+         frame-ancestors 'self'",
+        wrapper_style_hash()
+    )
+}
+
+/// Policy of open-source game documents under `/oss/` (WAVE-C D5): `PROXIED_DOCUMENT_CSP` without `blob:` in
+/// `connect-src` (`connect-src 'self'`), then `frame-ancestors <app origins>`; for an `isolated = true` entry
+/// `; sandbox allow-scripts` is added (`allow-pointer-lock` too when the entry declares `pointer_lock = true`): an
+/// opaque origin with no access to the proxy realm.
+pub fn oss_document_csp(app_origins: &[&str], isolated: bool, pointer_lock: bool) -> String {
+    let mut out = format!(
+        "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'; \
+         form-action 'self'; frame-ancestors {}",
+        app_origins.join(" ")
+    );
+    if isolated {
+        out.push_str("; sandbox allow-scripts");
+        if pointer_lock {
+            out.push_str(" allow-pointer-lock");
+        }
+    }
+    out
+}
+
+/// `Permissions-Policy` of app-origin HTML (WAVE-C D3). Every name is one Chromium recognizes (e2e games-player P12:
+/// Chromium logs "Unrecognized feature: 'bluetooth'", so Web Bluetooth, which needs a user-chosen device anyway, is
+/// not named); fullscreen, autoplay, gamepad, clipboard-write and the motion sensors are left to iframe `allow`.
+pub const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), \
+    hid=(), midi=(), display-capture=(), screen-wake-lock=(), idle-detection=(), \
+    publickey-credentials-get=(), publickey-credentials-create=(), otp-credentials=(), identity-credentials-get=(), \
+    xr-spatial-tracking=(), local-fonts=(), window-management=()";
+
+/// `Cross-Origin-Opener-Policy` of app-origin HTML (WAVE-C D3).
+pub const OPENER_POLICY: &str = "same-origin";
 
 /// The app origins as the proxy-origin policies take them: empty in single-origin mode (the app is `'self'` there).
 fn policy_app_origins(proxy: &ProxySetup) -> Vec<&str> {
@@ -385,13 +444,13 @@ mod tests {
             "worker-src 'self' blob:",
             "connect-src 'self' ws: wss:",
             "frame-src blob: 'self';",
-            "img-src 'self' data: blob: https:",
+            "img-src 'self' data: blob: https:;",
             "style-src 'self' 'unsafe-inline'",
             "font-src 'self'",
             "object-src 'none'",
             "base-uri 'self'",
             "form-action 'self'",
-            "frame-ancestors 'self'",
+            "frame-ancestors 'none'",
         ] {
             assert!(p.contains(needle), "missing {needle} in {p}");
         }
@@ -406,7 +465,10 @@ mod tests {
     fn isolated_shell_frames_only_the_proxy_origin_and_opens_no_websockets() {
         let p = shell_policy(&two_origins(), &[]);
         // Only the engine host: escaped code can navigate the engine iframe to anything this list allows.
-        assert!(p.contains("; frame-src blob: https://p.gnome.example.com;"), "{p}");
+        assert!(p.contains("; frame-src blob: 'self' https://p.gnome.example.com;"), "{p}");
+        // OSS thumbnails come from the proxy origin (plain HTTP in development).
+        assert!(p.contains("; img-src 'self' data: blob: https: https://p.gnome.example.com;"), "{p}");
+        assert!(p.ends_with("; frame-ancestors 'none'"), "{p}");
         assert!(p.contains("connect-src 'self';"), "{p}");
         assert!(!p.contains("ws:"), "{p}");
     }
@@ -612,9 +674,41 @@ mod tests {
         assert!(on.enforce.to_str().unwrap().contains("script-src"));
         assert!(on.report_only.is_none());
         let ro = headers_for(CspMode::ReportOnly, &single, &[]);
-        assert_eq!(ro.enforce, FRAME_ANCESTORS_ONLY);
+        assert_eq!(ro.enforce, SHELL_FRAME_ANCESTORS_ONLY);
         assert!(ro.report_only.unwrap().to_str().unwrap().contains("script-src"));
         let off = headers_for(CspMode::Off, &single, &[]);
-        assert_eq!(off.enforce, FRAME_ANCESTORS_ONLY);
+        assert_eq!(off.enforce, SHELL_FRAME_ANCESTORS_ONLY);
+    }
+
+    #[test]
+    fn wrapper_and_oss_policies() {
+        let w = wrapper_csp("https://html5.gamepix.com");
+        let hash = format!("'sha256-{}'", b64_std(&sha256(WRAPPER_STYLE.as_bytes())));
+        assert_eq!(
+            w,
+            format!(
+                "default-src 'none'; frame-src https://html5.gamepix.com; style-src {hash}; base-uri 'none'; \
+                 form-action 'none'; frame-ancestors 'self'"
+            )
+        );
+        let app = ["https://gnome.example.com"];
+        let doc = oss_document_csp(&app, false, false);
+        assert_eq!(
+            doc,
+            "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'; \
+             form-action 'self'; frame-ancestors https://gnome.example.com"
+        );
+        assert!(!doc.contains("'self' https://gnome"), "a proxied page must not frame an OSS game");
+        assert!(oss_document_csp(&app, true, false).ends_with("; sandbox allow-scripts"));
+        assert!(oss_document_csp(&app, true, true).ends_with("; sandbox allow-scripts allow-pointer-lock"));
+        assert!(!oss_document_csp(&app, false, true).contains("sandbox"));
+        for name in ["camera=()", "geolocation=()", "payment=()", "usb=()"] {
+            assert!(PERMISSIONS_POLICY.contains(name));
+        }
+        // Names Chromium does not recognize log a console error on every app page (e2e games-player P12).
+        assert!(!PERMISSIONS_POLICY.contains("bluetooth"));
+        for left_to_allow in ["fullscreen", "autoplay", "gamepad", "clipboard-write", "accelerometer", "gyroscope"] {
+            assert!(!PERMISSIONS_POLICY.contains(left_to_allow), "{left_to_allow}");
+        }
     }
 }

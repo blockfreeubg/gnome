@@ -17,7 +17,7 @@ export async function run(ctx) {
         const ok = init?.status?.engines?.scramjet?.state === 'ready' && init?.status?.engines?.ultraviolet?.state === 'ready';
         ctx.record({ test: 'init:engines-ready', result: ok ? 'pass' : 'fail', notes: `scramjet ${init?.status?.engines?.scramjet?.state}, ultraviolet ${init?.status?.engines?.ultraviolet?.state}; timings ${JSON.stringify(init?.timings)}` });
         // What this host reports (core.ts OFFERED_CAPABILITIES / ENFORCED_PERMISSIONS, each backed by host-capabilities).
-        const wantCaps = ['cookies', 'print', 'saveImage', 'saveLink', 'selectAll', 'siteData', 'suggest', 'vpnVerify', 'zoom'];
+        const wantCaps = ['blocker', 'cookies', 'print', 'saveImage', 'saveLink', 'selectAll', 'siteData', 'suggest', 'vpnVerify', 'zoom'];
         // Clipboard is enforced nowhere (shared/site-rules.ts ENFORCED_PERMISSIONS: Chromium's policy does not stop execCommand('copy')).
         const wantPerms = ctx.browser === 'firefox' ? ['fullscreen'] : ['autoplay', 'fullscreen'];
         const caps = [...(init?.capabilities ?? [])].sort();
@@ -150,8 +150,8 @@ export async function run(ctx) {
         // (tab.create with `start.opener`: what the app sends after tab.openRequest), the tab's favicon and an
         // `<a download>` the page clicks by script now carry the page as their initiator; before, all three sent the
         // victim's Strict cookie (the favicon and the download without any click). GNOME's own load (no opener) keeps
-        // no initiator, like a typed URL. Ultraviolet 3.2.10 ignores SameSite (every cookie on every request): a
-        // measured limit (README Known limitations), recorded expectFail.
+        // no initiator, like a typed URL (Sec-Fetch-Site: none). Ultraviolet 3.2.10 ignores SameSite by itself; GNOME's
+        // SameSite glue (WAVE-B3 lane x3, integration step) makes it hold in both engines.
         await perEngine(ctx, 'fixture:page-chosen-requests-carry-the-page-as-initiator (SameSite as in a browser)', async (engine) => {
           const victim = tab++;
           const attacker = tab++;
@@ -177,13 +177,12 @@ export async function run(ctx) {
             favicon: !!fav && !cookie(fav, 'xs_strict') && !cookie(fav, 'xs_lax'),
             aDownload: !!dl && !cookie(dl, 'xs_strict') && !cookie(dl, 'xs_lax'),
             openedTab: !!blank && !cookie(blank, 'xs_strict') && cookie(blank, 'xs_lax') && blank.site === 'cross-site' && blank.referer === `${fx.altOrigin}/`,
-            gnomeLoad: !!gnome && cookie(gnome, 'xs_strict') && cookie(gnome, 'xs_lax') && (gnome.site === 'none' || (engine === 'ultraviolet' && gnome.site === null)),
+            gnomeLoad: !!gnome && cookie(gnome, 'xs_strict') && cookie(gnome, 'xs_lax') && gnome.site === 'none',
           };
           const failed = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
           for (const t of [victim, attacker, opened, own]) await app.cmd('tab.close', { tabId: t }).catch(() => {});
           const brief = (e) => (e ? { cookie: e.cookie, site: e.site, referer: e.referer } : null);
           const notes = `${failed.length ? `failed ${failed.join(', ')}; ` : ''}openRequest ${!!req}; favicon ${JSON.stringify(brief(fav))}; <a download> ${JSON.stringify(brief(dl))}; opened tab ${JSON.stringify(brief(blank))}; GNOME's own load ${JSON.stringify(brief(gnome))}`;
-          if (failed.length && engine === 'ultraviolet') return { result: 'fail', expectFail: true, notes: `known limit (Ultraviolet 3.2.10 sends every cookie, SameSite ignored): ${notes}` };
           return { result: failed.length ? 'fail' : 'pass', notes };
         });
         const rejected = await app.gnome(() => window.gnomeTest.rejected);

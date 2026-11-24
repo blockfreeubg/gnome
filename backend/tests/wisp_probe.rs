@@ -9,7 +9,7 @@ use axum::body::Body;
 use common::*;
 use gnome_server::config::AccessMode;
 use gnome_server::gateway::Gateway;
-use gnome_server::gateway::ticket::{SessionRef, TicketKey};
+use gnome_server::gateway::ticket::{SessionRef, TicketKey, TicketRoute};
 use gnome_server::security::secret_key::SecretKey;
 use gnome_server::util::now_s;
 use http::{Method, Request, StatusCode, header};
@@ -63,7 +63,16 @@ async fn two_origins(extra: &[(&str, &str)]) -> TestApp {
 }
 
 async fn ticket(c: &mut Client<'_>) -> String {
-    let res = c.post("/api/wisp/ticket", json!({})).await;
+    ticket_for(c, "/wisp/").await
+}
+
+/// A ticket bound to the route of `path` (`/wisp/` or `/wisp/p/<id>/`, D23).
+async fn ticket_for(c: &mut Client<'_>, path: &str) -> String {
+    let body = match path.strip_prefix("/wisp/p/").and_then(|rest| rest.strip_suffix('/')) {
+        Some(id) => json!({"route": {"profile": id}}),
+        None => json!({}),
+    };
+    let res = c.post("/api/wisp/ticket", body).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     res.json()["ticket"].as_str().unwrap().to_string()
 }
@@ -87,9 +96,9 @@ async fn a_valid_ticket_gets_426_without_an_origin_in_every_url_form() {
     let dir = tempfile::tempdir().unwrap();
     let profiles = profiles_file(dir.path());
     let app = two_origins(&[("GNOME_VPN_PROFILES", &profiles)]).await;
-    let t = ticket(&mut app.client()).await;
-    let encoded = t.replace('.', "%2E");
     for route in ["/wisp/", "/wisp/p/se-got/"] {
+        let t = ticket_for(&mut app.client(), route).await;
+        let encoded = t.replace('.', "%2E");
         for query in [
             format!("t={t}"),
             format!("t={t}&/"),
@@ -104,9 +113,10 @@ async fn a_valid_ticket_gets_426_without_an_origin_in_every_url_form() {
             assert_eq!(res.header("content-type"), Some("application/json"), "{what}");
             assert_eq!(res.header("cache-control"), Some("no-store"), "{what}");
             assert!(res.set_cookies().is_empty(), "a probe sets no cookie: {what}");
-            assert!(!res.text().contains("w1."), "a probe mints nothing: {what}");
+            assert!(!res.text().contains("w2."), "a probe mints nothing: {what}");
         }
     }
+    let t = ticket_for(&mut app.client(), "/wisp/").await;
     // HEAD is a probe too (status only).
     let res = app.send(probe_req(Method::HEAD, &format!("/wisp/?t={t}&/"))).await;
     assert_eq!(res.status, StatusCode::UPGRADE_REQUIRED);
@@ -133,9 +143,18 @@ async fn refused_tickets_get_401_with_a_specific_code() {
     let gw = app.state.ext::<Gateway>().unwrap();
     let sref = SessionRef([4; 16]);
     let expired = gw.mint(sref, now_s() - 1);
-    let foreign =
-        TicketKey::new(&SecretKey::from_bytes(vec![9; 32]).unwrap(), AccessMode::Open, None).mint(sref, now_s() + 600);
-    let other_policy = TicketKey::new(&app.state.secret, AccessMode::Accounts, None).mint(sref, now_s() + 600);
+    let foreign = TicketKey::new(&SecretKey::from_bytes(vec![9; 32]).unwrap(), AccessMode::Open, None).mint(
+        sref,
+        &TicketRoute::Default,
+        now_s(),
+        now_s() + 600,
+    );
+    let other_policy = TicketKey::new(&app.state.secret, AccessMode::Accounts, None).mint(
+        sref,
+        &TicketRoute::Default,
+        now_s(),
+        now_s() + 600,
+    );
     let mut tampered = t.clone().into_bytes();
     let i = tampered.len() - 2;
     tampered[i] = if tampered[i] == b'A' { b'B' } else { b'A' };
@@ -252,15 +271,17 @@ async fn a_route_whose_upstream_is_down_gets_503_with_retry_after() {
     let dir = tempfile::tempdir().unwrap();
     let profiles = profiles_file(dir.path());
     let app = two_origins(&[("GNOME_VPN_PROFILES", &profiles)]).await;
+    // One session per route: a profile-route mint would supersede the same session's direct-route tickets (D23).
     let t = ticket(&mut app.client()).await;
+    let tp = ticket_for(&mut app.client(), "/wisp/p/se-got/").await;
     let gw = app.state.ext::<Gateway>().unwrap();
     // Nothing probed yet: unknown is not down.
-    for route in ["/wisp/", "/wisp/p/se-got/"] {
+    for (route, t) in [("/wisp/", &t), ("/wisp/p/se-got/", &tp)] {
         assert_eq!(app.send(probe(&format!("{route}?t={t}&/"))).await.status, StatusCode::UPGRADE_REQUIRED, "{route}");
     }
     // The health job's probe of the VPN profile fails (nothing listens there).
     gw.upstreams.get("se-got").unwrap().probe_now().await;
-    for query in [format!("t={t}&/"), format!("t={t}/"), format!("t={t}")] {
+    for query in [format!("t={tp}&/"), format!("t={tp}/"), format!("t={tp}")] {
         let res = app.send(probe(&format!("/wisp/p/se-got/?{query}"))).await;
         let what = format!("{query}: {}", res.text());
         assert_eq!(status_code(&res), (503, "wisp_upstream_unavailable".into()), "{what}");
@@ -279,7 +300,7 @@ async fn a_route_whose_upstream_is_down_gets_503_with_retry_after() {
     // The first 503 asked the health job for an early round, which is rate-limited to one per 10 s: nothing else in
     // this test claims it before this point (probe_now() and the 426 probes do not), so the claim is taken.
     assert!(!gw.upstreams.claim_early_probe(), "a 503 probe asks the health job for an early round");
-    let head = app.send(probe_req(Method::HEAD, &format!("/wisp/p/se-got/?t={t}&/"))).await;
+    let head = app.send(probe_req(Method::HEAD, &format!("/wisp/p/se-got/?t={tp}&/"))).await;
     assert_eq!((head.status, head.header("retry-after")), (StatusCode::SERVICE_UNAVAILABLE, Some("10")));
     // A ticket the upgrade would refuse is still reported as such (the engine host renews it first).
     let res = app.send(probe("/wisp/p/se-got/?t=garbage&/")).await;
@@ -297,6 +318,6 @@ async fn a_route_whose_upstream_is_down_gets_503_with_retry_after() {
     let metrics = app.send_admin(admin("/admin/metrics")).await.text();
     assert!(metrics.contains("gnome_ws_probes_total{result=\"upstream_down\"} 5\n"), "{metrics}");
     // An upgrade still answers as before (502 at the closed upstream).
-    let res = app.send(upgrade(&format!("/wisp/p/se-got/?t={t}&/"))).await;
+    let res = app.send(upgrade(&format!("/wisp/p/se-got/?t={tp}&/"))).await;
     assert_eq!(status_code(&res), (502, "bad_gateway".into()), "{}", res.text());
 }

@@ -205,7 +205,8 @@ pub async fn collect(state: &AppState) -> Result<Diagnostics, ApiError> {
             "schema_versions": db.schema_versions,
         }),
     );
-    d.insert("catalog".into(), json!({"games": 0, "by_source": {}, "last_import": null}));
+    // Replaced by the games module's `CatalogStats` when the catalog is enabled.
+    d.insert("catalog".into(), json!({"games": 0, "listed": 0, "by_source": {}, "last_import": null}));
     d.insert("filters".into(), json!([]));
     d.insert("upstreams".into(), json!([]));
     // ARCHITECTURE §4.6: the origin setup; single-origin mode is reported with an explanation.
@@ -257,6 +258,14 @@ pub async fn collect(state: &AppState) -> Result<Diagnostics, ApiError> {
             "trusted_proxies": c.trusted_proxies.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "admin_token": c.admin_token.is_some(),
             "log_ips": c.log_ips,
+            "catalog_sources": c.catalog.sources.iter().map(|s| s.id()).collect::<Vec<_>>(),
+            "thumb_proxy": c.thumb_proxy,
+            "games_embed_hosts": c.games_embed_hosts,
+            "oss_fetch": c.oss_fetch.as_str(),
+            "vpn_check_url": c.vpn_check_url.as_deref().and_then(url_host),
+            "vpn_check_url_v6": c.vpn_check_url_v6.as_deref().and_then(url_host),
+            "vpn_check_interval_min": c.vpn_check_interval_min,
+            "vpn_egress_shared_ok": c.vpn_egress_shared_ok,
         }),
     );
     d.insert(
@@ -353,6 +362,12 @@ async fn metrics(State(state): State<AppState>) -> Result<Response, ApiError> {
     res.headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"));
     Ok(res)
+}
+
+/// `host[:port]` of a URL (diagnostics name the check service's host only, never its path or query).
+pub fn url_host(url: &str) -> Option<String> {
+    let uri: http::Uri = url.parse().ok()?;
+    uri.authority().map(|a| a.as_str().rsplit('@').next().unwrap_or("").to_ascii_lowercase())
 }
 
 #[cfg(test)]

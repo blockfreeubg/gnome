@@ -1,0 +1,4 @@
+body { margin: 0; background: #000; color: #eee; font: 14px system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; }
+main { text-align: center; }
+h1 { font-size: 18px; margin: 8px 0; }
+canvas { border: 1px solid #333; max-width: 100%; }

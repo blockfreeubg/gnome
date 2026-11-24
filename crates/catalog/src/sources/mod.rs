@@ -250,6 +250,11 @@ pub(crate) fn finalize(mut g: NewGame, ctx: &ItemCtx<'_>) -> Result<NewGame, Rej
     if g.source_id.is_empty() || g.source_id.len() > 200 || text::has_control_chars(&g.source_id) {
         return Err("invalid source id".into());
     }
+    if g.embed_kind == crate::model::EmbedKind::Iframe
+        && !crate::url::Url::parse(&g.embed_url).is_some_and(|u| u.scheme == "https" && u.has_plain_path())
+    {
+        return Err("embed URL path has dot segments or encoded separators".into());
+    }
     g.source_categories.retain(|c| !c.trim().is_empty());
     if g.categories.is_empty() {
         g.categories = categories::assign(CategoryInput {

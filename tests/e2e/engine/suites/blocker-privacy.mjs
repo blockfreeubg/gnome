@@ -92,7 +92,7 @@ export async function startBlockerSuite(ctx, setupRow) {
   const app = await ctx.openApp(context, { route: 'profile:e2e-vpn', fallback: '0' });
   const caps = app.init?.capabilities ?? [];
   const offered = caps.includes('blocker');
-  ctx.record({ test: setupRow, result: offered ? 'pass' : 'fail', notes: `capabilities ${JSON.stringify(caps)}${offered ? '' : ' (no `blocker`: build without GNOME_ENGINE_TEST_CAPABILITIES=blocker?)'}` });
+  ctx.record({ test: setupRow, result: offered ? 'pass' : 'fail', notes: `capabilities ${JSON.stringify(caps)}${offered ? '' : ' (no `blocker`)'}` });
   const close = async () => {
     await app.close().catch(() => {});
     await context.close().catch(() => {});
@@ -350,8 +350,12 @@ export async function run(ctx) {
       const since = Date.now();
       const { id: t, r } = await open(`${B}/privacy/probe.html?to=${enc(tracked)}`, engine);
       if (!r.ok) return { result: 'fail', notes: `site-b did not load: ${JSON.stringify(r.error)}` };
+      const m0 = await app.mark();
       const c = await clickAndWait(app, t, '#link', /site-a\.localhost.*probe\.html/);
-      const blocked = c.events.filter((e) => e.type === 'tab.blocked').map((e) => e.p);
+      // Ultraviolet's count comes from the service worker's per-document batch, which can arrive after tab.loaded
+      // (about 250-750 ms, x1 review): wait up to 3 s for it before reading the counts.
+      await app.waitFor(m0, (e) => e.type === 'tab.blocked' && e.p.tabId === t && (e.p.byCategory?.urlparams ?? 0) >= 1, 3000);
+      const blocked = (await app.eventsSince(m0)).filter((e) => e.type === 'tab.blocked' && e.p?.tabId === t).map((e) => e.p);
       const urlparams = Math.max(0, ...blocked.map((b) => b.byCategory?.urlparams ?? 0));
       const seen = fx.requests({ since, label: 'site-a', path: '/privacy/probe.html' }).map((x) => x.search);
       const state = await app.cmd('tab.state', { tabId: t }).catch(() => null);

@@ -492,6 +492,7 @@ pub async fn serve_all(state: AppState, listeners: Listeners, shutdown: impl Fut
     let Listeners { public, proxy, admin } = listeners;
     let public_router = router::public(&state);
     let admin_router = router::admin(&state);
+    state.prepare_modules().await;
     state.start_jobs();
     let conns = TaskTracker::new();
     let p = &state.config.proxy;

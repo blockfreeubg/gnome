@@ -25,7 +25,7 @@
     'Downloads belong to your browser: GNOME lists them but cannot pause or cancel them, and does not see downloads a page builds itself (blob: and data: links).',
     'Per-site autoplay and fullscreen choices apply from the next page you open in GNOME (address bar, reload, back or forward), only where this browser lets GNOME enforce them, and only for sites that do not attack GNOME: a site built to attack GNOME can lift them for itself.',
     'Pages can always write to the clipboard after a click, as in a normal browser: no browser lets GNOME block every way of copying, so there is no clipboard setting.',
-    'Sites you open in GNOME are not kept apart as in a normal browser. Neither engine enforces the cross-origin rules (CORS), and Ultraviolet sends every cookie of a site with every request to it, whatever the site asked for (SameSite). So any site you open in GNOME can read pages of other sites you are signed in to inside GNOME (under Scramjet: those whose sign-in cookie allows cross-site use) and send them forged requests. Do not sign in to sensitive accounts inside GNOME.',
+    'Sites you open in GNOME are not kept apart as in a normal browser. Neither engine enforces the cross-origin rules (CORS): a page can read other sites’ responses that a browser would refuse it, and requests that need a preflight are sent without one. With Block third-party cookies (the default) these requests carry none of the other site’s cookies; with third-party cookies allowed, a site you open in GNOME can read pages of other sites you are signed in to inside GNOME whose sign-in cookie allows cross-site use, and send them forged requests. Do not sign in to sensitive accounts inside GNOME.',
     'Pop-ups and shortcuts that open GNOME’s own pages need a real click or key press inside the page.',
     'Blocking WebRTC stops sites that use it in the usual way. A site built to get around it can still send traffic directly, outside GNOME, and reveal your IP address. GNOME cannot close these gaps from inside a web page.',
     'The address bar and the VPN check show what pages report. A site built to attack GNOME can make them say anything, so neither is proof of a site’s identity or of your route.',
@@ -35,6 +35,16 @@
     'SVG, XHTML and XML documents, and pages sent without a content type, open without running their scripts, in both engines. Under Ultraviolet, so do pages whose content type is not exactly text/html. Pages that need those scripts do not work.',
     'Web pages embedded with <object> or <embed> do not load inside GNOME.',
     'In Firefox, GNOME may stop responding while a page’s print dialog is open (a page’s print() blocks the whole browser view). It works again when you close the dialog.',
+    'In Firefox, pages inside GNOME can nest at most seven frames.',
+    'Scramjet: a page’s history.pushState to another origin is ignored, without the error a browser throws.',
+    'Games load directly from their publishers, not through GNOME’s browser engine: the game network and its advertisers see your IP address and may set cookies and show ads. Games are not routed through the VPN, and GNOME’s content blocking does not apply to them.',
+    'GNOME’s keyboard shortcuts do not reach a game while the game has the focus. Click outside the game first.',
+    'A games list shows at most 15,000 games and does not say when it stops there. With a larger catalog, search or pick a category to reach the rest.',
+    'Open-source games that are not isolated run on the same origin as the proxied pages and share its storage.',
+    'In Firefox, most of GNOME’s permissions policy for games is ignored; the game frame’s own permissions are what limit games there.',
+    'The VPN routes only the pages you open in GNOME, not your device, your other tabs, GNOME’s own interface or games. A page built to attack GNOME can still reveal your device’s address (for example through WebRTC).',
+    'Exit checks report what the check service sees. They are not proof that every page took that route, and this browser’s own check can be faked by a page that broke out of GNOME’s browser engine.',
+    'After you change the VPN location, tabs that were already open keep their old route until you reload them; the VPN page counts them.',
   ];
 </script>
 

@@ -10,7 +10,9 @@
 #   label          shown in the location list, at most 64 characters
 #   country_code   ISO 3166-1 alpha-2 ("se"); stored lowercase
 #   country, city  at most 64 characters each
-#   provider_note  optional, at most 200 characters (e.g. which VPN account/tunnel backs it)
+#   provider_note  optional, at most 200 characters: whose egress this is, e.g. "the operator's own WireGuard server";
+#                  a provider's name in plain text at most, no logos. Use only egress whose terms allow every person
+#                  who can use this instance (README.md "Before you start: terms").
 #   wisp_upstream  "host:port" of the HolyWisp instance. Internal addresses only: an IP literal that is loopback,
 #                  private (RFC 1918 / ULA), CGNAT or link-local (never a cloud-metadata address such as
 #                  169.254.169.254 or fd00:ec2::254), or a DNS name such as a
@@ -20,6 +22,9 @@
 # Unknown keys are errors (typos are caught). At most 64 profiles. Restart gnome-server after editing this file.
 #
 # Only pages opened inside GNOME use these exits; the user's device and its other traffic are unchanged.
+#
+# Exit checks: set GNOME_VPN_CHECK_URL (and optionally GNOME_VPN_CHECK_URL_V6) to a check service you run or are
+# allowed to use (README.md "Verify"); without one nothing is checked.
 
 # Recipe A (gluetun): HolyWisp instances run in the gluetun container's network namespace and the gateway reaches them
 # by the service name on the shared Docker network (compose.example.yml).
@@ -29,7 +34,7 @@ label = "Sweden · Gothenburg"
 country_code = "se"
 country = "Sweden"
 city = "Gothenburg"
-provider_note = "Mullvad WireGuard tunnel, operator's own account"
+provider_note = "the operator's own WireGuard server"
 wisp_upstream = "gluetun:6002"
 
 [[profile]]
@@ -38,7 +43,7 @@ label = "Switzerland · Zurich"
 country_code = "ch"
 country = "Switzerland"
 city = "Zurich"
-provider_note = "Mullvad SOCKS5 exit through the same tunnel"
+provider_note = "a second exit of the operator's own WireGuard server"
 wisp_upstream = "gluetun:6003"
 
 # Recipe B (systemd on the host): holywisp@<id>.service on a loopback port.
@@ -48,5 +53,5 @@ wisp_upstream = "gluetun:6003"
 # country_code = "nl"
 # country = "Netherlands"
 # city = "Amsterdam"
-# provider_note = "Mullvad SOCKS5 exit, host WireGuard tunnel"
+# provider_note = "the operator's own WireGuard server, host tunnel"
 # wisp_upstream = "127.0.0.1:6004"

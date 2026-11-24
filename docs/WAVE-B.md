@@ -528,6 +528,9 @@ service's answer, never as proof (ENGINE-PROTOCOL §6.13).
 
 ## 9. Where Wave B step 3 (extensions) plugs in
 
+Wave B step 3 is planned and recorded in `docs/WAVE-B3.md` (decisions D1–D19, the §12.4 test matrix); what was built
+is in ARCHITECTURE §5.5 and ENGINE-PROTOCOL §6.17 and §8.8. The list below is the step-2 hand-over it started from.
+
 - Window side: `registerEngineHooks(hooks: EngineHooks)` (lane a's `src/engine-host/hooks.ts`); the Scramjet per-tab
   plugin already calls `onRequest`/`onResponse`/`onDocument` through `safeVerdict` and the counters.
 - Service worker: `registerSwHooks(hooks: RequestHooks)` (lane b's `src/sw/hooks.ts`), fed by

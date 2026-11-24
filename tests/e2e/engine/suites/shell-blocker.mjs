@@ -1,6 +1,6 @@
 // Lane x4 (app UI of the built-in extensions): rows U1–U13 of docs/WAVE-B3.md §12.2, driven through GNOME's real
 // app at `/` on the runner's real stack (gnome-server + HolyWisp, an `npm run build:e2e` build whose engine host offers
-// `blocker` through D19's GNOME_ENGINE_TEST_CAPABILITIES switch, so the app registers the `extensions` feature).
+// `blocker` (offered by every build since the step-3 integration), so the app registers the `extensions` feature).
 // Fixture pages come from servers/blocker-fixtures.mjs (`fixtures/blocker/ui/**`), reached through the VPN profile
 // route `e2e-vpn` (the TEST-ONLY allow-loopback HolyWisp); the filter lists are the runner's test lists.
 //
@@ -8,7 +8,7 @@
 // runner's test lists (x1's network*.txt: ads.localhost third-party, docblock.localhost $document, trk.localhost
 // third-party, bad.localhost as scam and malware; x2's cosmetic.txt site rule for site-a, used by U2).
 //
-// Parts (--parts): settings, lists, autoupdate, cookies, shield, switches, blocked, states, about, shots.
+// Parts (--parts): settings, lists, autoupdate, cookies, fresh, shield, switches, blocked, states, about, shots.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { activeTab, omnibox, openGnome, state, tabFrame, waitLoaded, waitState } from './shell-lib.mjs';
@@ -238,6 +238,55 @@ export async function run(ctx) {
           }
         }
         await setSetting('browser', 'engine', 'auto');
+      }
+
+      // ── K6 (the real fresh start): a site with an "until GNOME closes" cookie rule loses its cookies when GNOME
+      // starts again with no other GNOME tab open, before the restored tab's first request (both engines' jars).
+      if (want(ctx, 'fresh')) {
+        for (const engine of ENGINES) {
+          const tag = engine === 'scramjet' ? 'sj' : 'uv';
+          const ctxK6 = await ctx.newContext(browser);
+          try {
+            const a = await openGnome(ctx, ctxK6, '/browse');
+            await a.page.evaluate(([id, eng]) => {
+              const st = window.__gnomeSettings;
+              st.set('vpn', 'mode', 'gateway');
+              st.set('vpn', 'preferredLocation', id);
+              st.set('browser', 'engine', eng);
+              st.set('browser', 'startup', 'restore');
+              st.set('extensions', 'cookieRules', { 'site-a.localhost': 'session' });
+            }, [ctx.stack.profiles.live, engine]);
+            await waitState(a.page, (x) => x.tabs.length >= 1, 20_000).catch(() => null);
+            await a.page.waitForTimeout(500);
+            await omnibox(a.page, fx.url('site-a', `/set-cookie?gnome_k6${tag}=1${encodeURIComponent('; Max-Age=86400')}`));
+            await waitLoaded(a.page, /\/set-cookie/, 60_000).catch(() => undefined);
+            const path = `/cookies`;
+            const before = Date.now();
+            await omnibox(a.page, fx.url('site-a', `${path}?format=html&k6=${tag}`));
+            await waitLoaded(a.page, /\/cookies/, 60_000).catch(() => undefined);
+            const had = fx.fixtures.requests({ since: before, label: 'site-a', path }).some((r) => String(r.headers.cookie ?? '').includes(`gnome_k6${tag}=1`));
+            await a.page.waitForTimeout(1500); // the session is stored
+            await a.page.close();
+            const since = Date.now();
+            const b = await openGnome(ctx, ctxK6, '/browse');
+            const restored = await waitState(b.page, (x) => x.tabs.some((t) => /\/cookies/.test(t.url ?? '') && t.live), 60_000).catch(() => null);
+            let first = null;
+            for (let i = 0; i < 120 && !first; i++) {
+              first = fx.fixtures.requests({ since, label: 'site-a', path })[0] ?? null;
+              if (!first) await b.page.waitForTimeout(250);
+            }
+            const carried = first ? String(first.headers.cookie ?? '').includes(`gnome_k6${tag}`) : null;
+            rec(
+              `K6 a fresh start deletes the cookies of a site with an "until GNOME closes" rule before the restored tab's first request [${engine}]`,
+              had && !!restored && first !== null && carried === false,
+              { had, restored: !!restored, firstCookie: first ? (first.headers.cookie ?? null) : 'no request' },
+              { engine },
+            );
+            await b.page.close();
+          } finally {
+            await ctxK6.close();
+          }
+        }
       }
 
       // What the tab shows and the shield says (the cumulative counts of tab.blocked, the shield's own number).

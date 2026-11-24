@@ -59,12 +59,12 @@ async fn preferred_listing_with_fallback() {
     // A favorite pointing at the fallback still resolves (by-ids and detail).
     assert_eq!(cat.by_ids(&conn, &[fa]).unwrap().len(), 1);
     let fslug: String = conn.query_row("SELECT slug FROM games WHERE id = ?1", [fa], |r| r.get(0)).unwrap();
-    assert!(cat.game(&conn, &fslug, 0).unwrap().is_some());
+    assert!(cat.game(&conn, &fslug, 0, &Default::default()).unwrap().is_some());
 
     // The preferred listing breaks: the fallback takes over at once.
     cat.set_status(&mut conn, gp, Some(AdminStatus::Broken)).unwrap();
     assert_eq!(ids(&cat, &conn), [(fa, Source::Famobi)]);
-    let page = cat.game(&conn, &fslug, 0).unwrap().unwrap();
+    let page = cat.game(&conn, &fslug, 0, &Default::default()).unwrap().unwrap();
     assert_eq!(page.game.embed_url, "https://play.famobi.com/temple-blocks/A-TEST");
     cat.set_status(&mut conn, gp, None).unwrap();
     assert_eq!(ids(&cat, &conn), [(gp, Source::GamePix)]);

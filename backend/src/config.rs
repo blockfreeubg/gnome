@@ -53,13 +53,6 @@ const fn secret(name: &'static str, help: &'static str) -> VarSpec {
     VarSpec { name, default: "", secret: true, empty_allowed: false, help, inactive: None }
 }
 
-/// Mark a setting as belonging to `module`, which this build does not include.
-const fn inactive(spec: VarSpec, module: &'static str) -> VarSpec {
-    VarSpec { inactive: Some(module), ..spec }
-}
-
-const GAME_CATALOG: &str = "the game catalog";
-
 /// Every setting the server understands, in documentation order.
 pub const VARS: &[VarSpec] = &[
     var("GNOME_BIND", "0.0.0.0:8080", "public listener address"),
@@ -100,19 +93,70 @@ pub const VARS: &[VarSpec] = &[
     ),
     var("GNOME_WISP_UPSTREAM", "127.0.0.1:6001", "primary HolyWisp address (internal host:port)"),
     var("GNOME_VPN_PROFILES", "", "path to the VPN gateway profiles TOML (egress HolyWisp instances)"),
+    var_empty_ok(
+        "GNOME_VPN_CHECK_URL",
+        "",
+        "exit check service for VPN locations (HTTPS JSON with ip, country, city); empty = no exit checks",
+    ),
+    var_empty_ok(
+        "GNOME_VPN_CHECK_URL_V6",
+        "",
+        "the same check service under an IPv6-only name; empty = IPv6 not checked",
+    ),
+    var(
+        "GNOME_VPN_CHECK_INTERVAL_MIN",
+        "15",
+        "minutes between server-side exit checks of each location; 0 = on request only",
+    ),
+    var(
+        "GNOME_VPN_EGRESS_SHARED_OK",
+        "false",
+        "true = your VPN egress's terms allow every person who can use this instance (silences the terms warning)",
+    ),
     var("GNOME_SOURCE_URL", "", "link to the corresponding source code (AGPL-3.0 section 13), shown in About"),
     var("GNOME_ENGINES", "scramjet,ultraviolet", "enabled proxy engines"),
     var("GNOME_ENGINE_DEFAULT", "scramjet", "default proxy engine (must be enabled)"),
-    inactive(var("GNOME_CATALOG_REFRESH_HOURS", "24", "periodic game catalog import interval; 0 = off"), GAME_CATALOG),
-    inactive(var("GNOME_CATALOG_SOURCES", "gamepix,oss", "enabled game catalog importers"), GAME_CATALOG),
+    var("GNOME_CATALOG_REFRESH_HOURS", "24", "hours between game catalog imports of each source; 0 = only on request"),
+    var(
+        "GNOME_CATALOG_SOURCES",
+        "gamepix,oss",
+        "game catalog sources: gamepix, gamedistribution, playgama, gamemonetize, famobi, itchio, js13k, oss; none = no catalog",
+    ),
+    var("GNOME_GAMEPIX_SID", "1", "GamePix publisher SID (1 = the public default SID)"),
+    var("GNOME_GD_PUBLISHER_ID", "", "GameDistribution publisher ID (required to enable gamedistribution)"),
+    var("GNOME_PLAYGAMA_CLID", "", "Playgama partner CLID (required to enable playgama)"),
+    var(
+        "GNOME_GAMEMONETIZE_ENABLED",
+        "false",
+        "enable gamemonetize (after adding this site in the GameMonetize dashboard)",
+    ),
+    var("GNOME_FAMOBI_AFFILIATE_ID", "", "Famobi affiliate ID (required to enable famobi)"),
+    var("GNOME_ITCHIO_FEEDS", "games/free/platform-web", "itch.io browse paths, comma-separated (link-out records)"),
+    var("GNOME_ITCHIO_MAX_PAGES", "3", "pages per itch.io feed (1-20)"),
+    var("GNOME_JS13K_FIRST_YEAR", "2012", "first js13kGames year (link-out records)"),
+    var("GNOME_OSS_MANIFEST", "", "open-source games manifest; empty = the manifest built into gnome-server"),
+    var("GNOME_OSS_GAMES_DIR", "", "where open-source game builds live; empty = $GNOME_DATA_DIR/oss-games"),
+    var("GNOME_OSS_REQUIRE_BUILDS", "true", "list only open-source games whose build exists"),
+    var("GNOME_OSS_FETCH", "auto", "fetch missing open-source builds in the background: auto | manual"),
+    var("GNOME_OSS_MAX_MB", "512", "disk cap for all open-source game builds together, in MiB (16-65536)"),
+    var("GNOME_CATALOG_BLOCKLIST", "", "extra trademark/knock-off terms, comma-separated (!term removes a default)"),
+    var("GNOME_CATALOG_BLOCKLIST_FILE", "", "file with one blocklist term per line (title:, start:, label: scopes)"),
+    var(
+        "GNOME_CATALOG_DEDUP_ORDER",
+        "playgama,gamepix,gamedistribution,gamemonetize,famobi,oss,itchio,js13k",
+        "preferred listing when one game is in several sources",
+    ),
+    var("GNOME_CATALOG_USER_AGENT", "", "User-Agent of catalog feed requests; empty = GNOME-catalog/<version>"),
+    var("GNOME_GAMES_EMBED_HOSTS", "", "developer hosts approved for game embeds, comma-separated DNS names"),
+    var("GNOME_ADS_TXT", "", "file served as /ads.txt on the app origin (lines from your game networks)"),
     var(
         "GNOME_FILTERS_REFRESH_HOURS",
         "24",
         "filter-list re-check interval for lists without '! Expires' (clamped 4-168 h); 0 = manual refresh only",
     ),
     var("GNOME_FILTER_LISTS_FILE", "", "TOML file that adds, overrides or disables filter lists"),
-    inactive(var("GNOME_THUMB_PROXY", "true", "serve game thumbnails through /api/thumb/:id"), GAME_CATALOG),
-    inactive(var("GNOME_THUMB_CACHE_MB", "256", "disk cap for the thumbnail cache"), GAME_CATALOG),
+    var("GNOME_THUMB_PROXY", "true", "serve game thumbnails through /api/thumb/:id"),
+    var("GNOME_THUMB_CACHE_MB", "256", "disk cap for the thumbnail cache in MiB; 0 = no disk cache"),
     var("GNOME_MAX_WS_PER_IP", "32", "concurrent Wisp connections per client IP (IPv6: per /64)"),
     var("GNOME_MAX_WS_PER_SESSION", "16", "concurrent Wisp connections per session"),
     var("GNOME_RATE_LIMIT_SCALE", "1.0", "multiplies every rate limit; 0 disables rate limiting"),
@@ -304,6 +348,32 @@ pub struct Setting {
     pub inactive: Option<&'static str>,
 }
 
+/// `GNOME_OSS_FETCH`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OssFetch {
+    /// The `catalog.oss-fetch` job fetches missing or outdated builds of enabled manifest entries.
+    Auto,
+    /// Only `gnome-server catalog fetch-oss` and `POST /admin/catalog/oss-fetch` fetch.
+    Manual,
+}
+
+impl OssFetch {
+    fn parse(v: &str) -> Result<Self, String> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "manual" => Ok(Self::Manual),
+            _ => Err("expected auto or manual".into()),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Manual => "manual",
+        }
+    }
+}
+
 /// Validated, immutable server configuration. `Debug` redacts secrets.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -344,14 +414,36 @@ pub struct Config {
     pub profiles: Vec<VpnProfile>,
     pub source_url: Option<String>,
     pub engines: Engines,
+    /// The catalog crate's configuration, parsed by `gnome_catalog::CatalogConfig::from_env` over the same merged
+    /// variables (environment over `GNOME_CONFIG` file), with `GNOME_DATA_DIR` passed through. Its `sources` are the
+    /// usable ones: gated on operator IDs by the crate, then by the server: `oss` needs two origins (D5),
+    /// `gamedistribution` a known app origin (its referrer URL, D2). Empty `sources` = no games module.
+    pub catalog: gnome_catalog::CatalogConfig,
     pub catalog_refresh_hours: u32,
-    pub catalog_sources: Vec<String>,
     pub filters_refresh_hours: u32,
     /// `GNOME_FILTER_LISTS_FILE` (path) and the effective filter-list registry (built-ins + overrides).
     pub filter_lists_file: Option<PathBuf>,
     pub filter_lists: Vec<crate::filters::registry::ListDef>,
     pub thumb_proxy: bool,
     pub thumb_cache_mb: u32,
+    /// `GNOME_GAMES_EMBED_HOSTS`: lowercase DNS names (>= 2 labels, no IP, port or wildcard, <= 64 entries, never an
+    /// app or proxy origin host).
+    pub games_embed_hosts: Vec<String>,
+    pub oss_fetch: OssFetch,
+    /// `GNOME_OSS_MAX_MB` (16-65536).
+    pub oss_max_mb: u32,
+    /// `GNOME_ADS_TXT`: an absolute path (a missing file is a warning).
+    pub ads_txt: Option<PathBuf>,
+    /// `GNOME_VPN_CHECK_URL` (`None` when empty, the default): an absolute `https://` URL without credentials,
+    /// <= 2048 bytes; a plain `http://` URL is accepted with a warning (the e2e fixture uses one through the test-only
+    /// HolyWisp).
+    pub vpn_check_url: Option<String>,
+    /// `GNOME_VPN_CHECK_URL_V6` (`None` when empty): same rules; only together with `vpn_check_url`.
+    pub vpn_check_url_v6: Option<String>,
+    /// `GNOME_VPN_CHECK_INTERVAL_MIN` (0-1440; 0 = on request only).
+    pub vpn_check_interval_min: u32,
+    /// `GNOME_VPN_EGRESS_SHARED_OK` (D16).
+    pub vpn_egress_shared_ok: bool,
     pub max_ws_per_ip: u32,
     pub max_ws_per_session: u32,
     /// 0 disables rate limiting.
@@ -503,11 +595,18 @@ impl Config {
         let enabled_engines = p.parse("GNOME_ENGINES", parse_engines);
         let engine_default = p.parse("GNOME_ENGINE_DEFAULT", EngineId::parse);
         let catalog_refresh_hours = p.parse("GNOME_CATALOG_REFRESH_HOURS", |v| parse_u32_in(v, 0, 8760));
-        let catalog_sources = p.parse("GNOME_CATALOG_SOURCES", parse_ident_list);
         let filters_refresh_hours = p.parse("GNOME_FILTERS_REFRESH_HOURS", |v| parse_u32_in(v, 0, 8760));
         let filter_lists_file = p.parse_opt("GNOME_FILTER_LISTS_FILE", parse_path);
         let thumb_proxy = p.parse("GNOME_THUMB_PROXY", parse_bool);
         let thumb_cache_mb = p.parse("GNOME_THUMB_CACHE_MB", |v| parse_u32_in(v, 0, 1_048_576));
+        let games_embed_hosts = p.parse("GNOME_GAMES_EMBED_HOSTS", parse_embed_hosts);
+        let oss_fetch = p.parse("GNOME_OSS_FETCH", OssFetch::parse);
+        let oss_max_mb = p.parse("GNOME_OSS_MAX_MB", |v| parse_u32_in(v, 16, 65_536));
+        let ads_txt = p.parse_opt("GNOME_ADS_TXT", parse_abs_path);
+        let vpn_check_url = p.parse_opt("GNOME_VPN_CHECK_URL", parse_check_url).flatten();
+        let vpn_check_url_v6 = p.parse_opt("GNOME_VPN_CHECK_URL_V6", parse_check_url).flatten();
+        let vpn_check_interval_min = p.parse("GNOME_VPN_CHECK_INTERVAL_MIN", |v| parse_u32_in(v, 0, 1440));
+        let vpn_egress_shared_ok = p.parse("GNOME_VPN_EGRESS_SHARED_OK", parse_bool);
         let max_ws_per_ip = p.parse("GNOME_MAX_WS_PER_IP", |v| parse_u32_in(v, 1, 100_000));
         let max_ws_per_session = p.parse("GNOME_MAX_WS_PER_SESSION", |v| parse_u32_in(v, 1, 100_000));
         let rate_limit_scale = p.parse("GNOME_RATE_LIMIT_SCALE", parse_scale);
@@ -652,6 +751,54 @@ impl Config {
                     .into(),
             );
         }
+        let catalog = parse_catalog(&mut p, &data_dir, &proxy, &public_origins);
+        if !catalog.sources.is_empty() && !thumb_proxy {
+            p.warnings.push(
+                "GNOME_THUMB_PROXY=false: thumbnails load from the game networks' image servers in visitors' browsers, \
+                 which then see their IP addresses"
+                    .into(),
+            );
+        }
+        for host in &games_embed_hosts {
+            if own_hosts(&proxy, &public_origins).iter().any(|h| h == host) {
+                p.problems.push(format!(
+                    "GNOME_GAMES_EMBED_HOSTS: {host:?} is this server's own app or proxy host; games are never framed \
+                     from it"
+                ));
+            }
+        }
+        if let Some(path) = &ads_txt
+            && !path.is_file()
+        {
+            p.warnings
+                .push(format!("GNOME_ADS_TXT={}: the file does not exist (yet); /ads.txt answers 404", path.display()));
+        }
+        if vpn_check_url_v6.is_some() && vpn_check_url.is_none() {
+            p.problems.push("GNOME_VPN_CHECK_URL_V6 requires GNOME_VPN_CHECK_URL".into());
+        }
+        for (name, url) in [("GNOME_VPN_CHECK_URL", &vpn_check_url), ("GNOME_VPN_CHECK_URL_V6", &vpn_check_url_v6)] {
+            if url.as_deref().is_some_and(|u| u[..5].eq_ignore_ascii_case("http:")) {
+                p.warnings.push(format!("{name}: the VPN exit check is sent unencrypted (http:)"));
+            }
+        }
+        if !profiles.is_empty() {
+            if !vpn_egress_shared_ok {
+                let public = access_mode == AccessMode::Open
+                    || (access_mode == AccessMode::Accounts && registration == Registration::Open);
+                if public {
+                    p.warnings.push(VPN_TERMS_WARNING.into());
+                } else if access_mode == AccessMode::Code {
+                    p.warnings.push(VPN_CODE_WARNING.into());
+                }
+            }
+            if vpn_check_url.is_none() {
+                p.warnings.push(
+                    "no exit checks: set GNOME_VPN_CHECK_URL to a check service you run or are allowed to use \
+                     (services/vpn/README.md \"Verify\")"
+                        .into(),
+                );
+            }
+        }
         for spec in VARS {
             if let (Some(module), Some(_)) = (spec.inactive, p.user_value(spec.name)) {
                 p.warnings
@@ -702,13 +849,21 @@ impl Config {
             profiles,
             source_url,
             engines,
+            catalog,
             catalog_refresh_hours,
-            catalog_sources,
             filters_refresh_hours,
             filter_lists_file,
             filter_lists,
             thumb_proxy,
             thumb_cache_mb,
+            games_embed_hosts,
+            oss_fetch,
+            oss_max_mb,
+            ads_txt,
+            vpn_check_url,
+            vpn_check_url_v6,
+            vpn_check_interval_min,
+            vpn_egress_shared_ok,
             max_ws_per_ip,
             max_ws_per_session,
             rate_limit_scale,
@@ -935,14 +1090,133 @@ fn parse_engines(v: &str) -> Result<Vec<EngineId>, String> {
     Ok(engines)
 }
 
-fn parse_ident_list(v: &str) -> Result<Vec<String>, String> {
-    split_list(v)
-        .map(|s| {
-            let ok = s.len() <= 64
-                && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
-            if ok { Ok(s.to_string()) } else { Err(format!("{s:?} is not a valid source id ([a-z0-9_-])")) }
-        })
+/// D16: VPN locations on a server everyone can use.
+pub const VPN_TERMS_WARNING: &str = "VPN locations are usable by everyone who can open this server or register on it. \
+    Use only VPN egress whose terms allow every person who can use this instance; consumer VPN subscriptions \
+    (Mullvad's among them) do not allow offering the VPN to others. GNOME's access modes do not change what a \
+    provider's terms allow. Set GNOME_VPN_EGRESS_SHARED_OK=true only if your egress's terms allow this use.";
+
+/// D16: VPN locations in access-code mode.
+pub const VPN_CODE_WARNING: &str = "VPN locations are usable by everyone who has the access code: keep the code within \
+    the people your VPN egress's terms allow";
+
+/// The catalog crate's configuration over the merged variables, then the server's own gates (§3.1 of WAVE-C).
+fn parse_catalog(
+    p: &mut Parser,
+    data_dir: &Path,
+    proxy: &ProxySetup,
+    public_origins: &[String],
+) -> gnome_catalog::CatalogConfig {
+    let data = data_dir.display().to_string();
+    let lookup =
+        |k: &str| p.raw.get(k).map(|(v, _)| v.clone()).or_else(|| (k == "GNOME_DATA_DIR").then(|| data.clone()));
+    let mut catalog = match gnome_catalog::CatalogConfig::from_env(lookup) {
+        Ok((catalog, warnings)) => {
+            p.warnings.extend(warnings);
+            catalog
+        }
+        Err(gnome_catalog::CatalogError::Config(msg)) => {
+            p.problems.push(msg);
+            return gnome_catalog::CatalogConfig { sources: Vec::new(), ..Default::default() };
+        }
+        Err(e) => {
+            p.problems.push(format!("game catalog: {e}"));
+            return gnome_catalog::CatalogConfig { sources: Vec::new(), ..Default::default() };
+        }
+    };
+    if !proxy.isolated() && catalog.sources.contains(&gnome_catalog::Source::Oss) {
+        catalog.sources.retain(|s| *s != gnome_catalog::Source::Oss);
+        p.warnings.push(
+            "open-source games need a separate proxy origin (GNOME_PROXY_ORIGIN or GNOME_PROXY_BIND); they are never \
+             served from the app origin"
+                .into(),
+        );
+    }
+    if !proxy.isolated()
+        && public_origins.is_empty()
+        && catalog.sources.contains(&gnome_catalog::Source::GameDistribution)
+    {
+        catalog.sources.retain(|s| *s != gnome_catalog::Source::GameDistribution);
+        p.warnings
+            .push("gamedistribution needs GNOME_PUBLIC_ORIGINS: its embeds must name the page that shows them".into());
+    }
+    catalog
+}
+
+/// Hosts (with `:port` when not the default) of the app and proxy origins this server knows.
+fn own_hosts(proxy: &ProxySetup, public_origins: &[String]) -> Vec<String> {
+    proxy
+        .app_origins()
+        .iter()
+        .chain(public_origins)
+        .map(String::as_str)
+        .chain(proxy.origin())
+        .filter_map(|o| o.split_once("://").map(|(_, h)| h.to_string()))
         .collect()
+}
+
+/// `GNOME_GAMES_EMBED_HOSTS`: exact DNS names.
+fn parse_embed_hosts(v: &str) -> Result<Vec<String>, String> {
+    let hosts: Vec<String> = split_list(v).map(str::to_ascii_lowercase).collect();
+    if hosts.len() > 64 {
+        return Err("at most 64 hosts".into());
+    }
+    for h in &hosts {
+        let labels: Vec<&str> = h.split('.').collect();
+        let label_ok = |l: &&str| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        };
+        let is_ip = h.parse::<std::net::IpAddr>().is_ok() || h.starts_with('[');
+        let numeric_tld = labels.last().is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()));
+        if is_ip || numeric_tld || h.contains(':') {
+            return Err(format!("{h:?}: an IP address or a port is not a host name"));
+        }
+        if h.contains('*') {
+            return Err(format!("{h:?}: wildcards are not allowed (list each host)"));
+        }
+        if labels.len() < 2 || h.len() > 253 || !labels.iter().all(label_ok) {
+            return Err(format!("{h:?} is not a DNS name like games.example.com"));
+        }
+    }
+    Ok(hosts)
+}
+
+fn parse_abs_path(v: &str) -> Result<PathBuf, String> {
+    let path = parse_path(v)?;
+    if !path.is_absolute() {
+        return Err("must be an absolute path".into());
+    }
+    Ok(path)
+}
+
+/// `GNOME_VPN_CHECK_URL(_V6)`: empty = off; else an absolute http(s) URL without credentials, <= 2048 bytes.
+fn parse_check_url(v: &str) -> Result<Option<String>, String> {
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    if v.len() > 2048 {
+        return Err("at most 2048 bytes".into());
+    }
+    if v.contains('#') {
+        return Err("must not contain a #fragment".into());
+    }
+    let uri: http::Uri = v.parse().map_err(|e| format!("not a URL: {e}"))?;
+    let scheme_ok = uri.scheme_str().is_some_and(|s| s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("http"));
+    let Some(authority) = uri.authority().filter(|_| scheme_ok) else {
+        return Err("expected an https:// URL".into());
+    };
+    if authority.as_str().contains('@') {
+        return Err("must not contain credentials".into());
+    }
+    if authority.host().is_empty() {
+        return Err("expected an https:// URL with a host".into());
+    }
+    Ok(Some(v.to_string()))
 }
 
 fn parse_log_filter(v: &str) -> Result<String, String> {
@@ -974,7 +1248,10 @@ mod tests {
         assert_eq!(c.engines.default, EngineId::Scramjet);
         // Decisions 2026-11-11 (one-hour tickets) and 2026-11-10 (GamePix feed + curated OSS games).
         assert_eq!(c.wisp_ticket_ttl_s, 3600);
-        assert_eq!(c.catalog_sources, ["gamepix", "oss"]);
+        assert_eq!(c.catalog.sources[0], gnome_catalog::Source::GamePix);
+        assert_eq!((c.oss_fetch, c.oss_max_mb, c.vpn_check_interval_min), (OssFetch::Auto, 512, 15));
+        // D15: no exit-check service unless the operator names one.
+        assert!(c.vpn_check_url.is_none() && c.vpn_check_url_v6.is_none() && !c.vpn_egress_shared_ok);
         assert_eq!(c.settings.len(), VARS.len());
         // Decision 2026-11-11: custom Wisp servers need the operator's opt-in; the dev re-index is off too.
         assert!(!c.allow_custom_wisp && !c.static_reload && c.proxy_csp.is_none());
@@ -1042,7 +1319,12 @@ mod tests {
         let short = load(&[("GNOME_ACCESS_MODE", "code"), ("GNOME_ACCESS_CODE", "letmein")]).unwrap();
         assert!(short.warnings.iter().any(|w| w.contains("shorter than 8")), "{:?}", short.warnings);
         assert!(!short.warnings.iter().any(|w| w.contains("letmein")), "the code itself is never printed");
-        let long = load(&[("GNOME_ACCESS_MODE", "code"), ("GNOME_ACCESS_CODE", "mushroom-forest-42")]).unwrap();
+        let long = load(&[
+            ("GNOME_ACCESS_MODE", "code"),
+            ("GNOME_ACCESS_CODE", "mushroom-forest-42"),
+            ("GNOME_CATALOG_SOURCES", "gamepix"),
+        ])
+        .unwrap();
         assert!(long.warnings.is_empty(), "{:?}", long.warnings);
     }
 
@@ -1081,34 +1363,151 @@ mod tests {
     }
 
     #[test]
-    fn settings_of_missing_modules_are_flagged() {
-        let quiet = load(&[]).unwrap();
-        assert!(!quiet.warnings.iter().any(|w| w.contains("no effect")), "{:?}", quiet.warnings);
-        let c = load(&[
-            ("GNOME_CATALOG_REFRESH_HOURS", "12"),
-            ("GNOME_THUMB_PROXY", "false"),
-            ("GNOME_WISP_UPSTREAM", "127.0.0.1:6002"),
-            ("GNOME_FILTERS_REFRESH_HOURS", "12"),
-        ])
-        .unwrap();
-        let flagged: Vec<_> = c.warnings.iter().filter(|w| w.contains("has no effect")).collect();
-        assert_eq!(flagged.len(), 2, "{:?}", c.warnings);
-        assert!(flagged[0].starts_with("GNOME_CATALOG_REFRESH_HOURS") && flagged[0].contains(GAME_CATALOG));
-        let s = c.settings.iter().find(|s| s.name == "GNOME_CATALOG_REFRESH_HOURS").unwrap();
-        assert_eq!((s.value.as_str(), s.inactive), ("12", Some(GAME_CATALOG)));
-        // Settings of modules this build includes (the Wisp gateway, filter lists) are active.
-        for name in [
-            "GNOME_BIND",
-            "GNOME_WISP_UPSTREAM",
-            "GNOME_MAX_WS_PER_IP",
-            "GNOME_VPN_PROFILES",
-            "GNOME_FILTERS_REFRESH_HOURS",
-            "GNOME_FILTER_LISTS_FILE",
-        ] {
-            assert!(c.settings.iter().find(|s| s.name == name).unwrap().inactive.is_none(), "{name}");
-        }
+    fn every_setting_is_active() {
+        let c = load(&[("GNOME_CATALOG_REFRESH_HOURS", "12"), ("GNOME_THUMB_PROXY", "false")]).unwrap();
+        assert!(!c.warnings.iter().any(|w| w.contains("has no effect")), "{:?}", c.warnings);
+        assert!(c.settings.iter().all(|s| s.inactive.is_none()));
+        assert_eq!(c.catalog_refresh_hours, 12);
         // Still validated.
         assert!(load(&[("GNOME_THUMB_CACHE_MB", "-1")]).is_err());
+    }
+
+    const TWO_ORIGINS: [(&str, &str); 2] =
+        [("GNOME_PUBLIC_ORIGINS", "https://gnome.example.com"), ("GNOME_PROXY_ORIGIN", "https://p.gnome.example.com")];
+
+    #[test]
+    fn every_catalog_variable_is_a_server_setting() {
+        let asked = std::sync::Mutex::new(Vec::<String>::new());
+        let _ = gnome_catalog::CatalogConfig::from_env(|k| {
+            asked.lock().unwrap().push(k.to_string());
+            None
+        });
+        let asked = asked.into_inner().unwrap();
+        assert!(asked.len() >= 15, "{asked:?}");
+        for k in asked {
+            assert!(VARS.iter().any(|v| v.name == k), "{k} is read by gnome-catalog but missing from VARS");
+        }
+        // And a config file accepts them.
+        let f = ConfigFile::parse(Path::new("t.toml"), "gamepix_sid = \"abc\"\noss_fetch = \"manual\"\n").unwrap();
+        let c = Config::from_lookup(|_| None, Some(f)).unwrap();
+        assert_eq!(c.catalog.gamepix.sid, "abc");
+        assert_eq!(c.oss_fetch, OssFetch::Manual);
+    }
+
+    #[test]
+    fn catalog_sources_are_gated_by_the_origin_setup() {
+        use gnome_catalog::Source;
+        let single =
+            load(&[("GNOME_CATALOG_SOURCES", "gamepix,oss,gamedistribution"), ("GNOME_GD_PUBLISHER_ID", "abc")])
+                .unwrap();
+        assert_eq!(single.catalog.sources, [Source::GamePix]);
+        assert!(single.warnings.iter().any(|w| w.starts_with("open-source games need a separate proxy origin")));
+        assert!(single.warnings.iter().any(|w| w.starts_with("gamedistribution needs GNOME_PUBLIC_ORIGINS")));
+        let mut vars = TWO_ORIGINS.to_vec();
+        vars.extend([("GNOME_CATALOG_SOURCES", "gamepix,oss,gamedistribution"), ("GNOME_GD_PUBLISHER_ID", "abc")]);
+        let two = load(&vars).unwrap();
+        assert_eq!(two.catalog.sources.len(), 3, "{:?}", two.warnings);
+        assert!(load(&[("GNOME_CATALOG_SOURCES", "none")]).unwrap().catalog.sources.is_empty());
+        assert!(load(&[("GNOME_CATALOG_SOURCES", "nope")]).is_err());
+        let data = load(&[("GNOME_DATA_DIR", "/srv/gnome")]).unwrap();
+        assert_eq!(data.catalog.oss.builds_dir, Path::new("/srv/gnome/oss-games"));
+        let thumbs = load(&[("GNOME_THUMB_PROXY", "false")]).unwrap();
+        assert!(thumbs.warnings.iter().any(|w| w.starts_with("GNOME_THUMB_PROXY=false")));
+        let none = load(&[("GNOME_THUMB_PROXY", "false"), ("GNOME_CATALOG_SOURCES", "none")]).unwrap();
+        assert!(!none.warnings.iter().any(|w| w.starts_with("GNOME_THUMB_PROXY=false")));
+    }
+
+    #[test]
+    fn embed_hosts_are_exact_dns_names() {
+        let c = load(&[("GNOME_GAMES_EMBED_HOSTS", "DeadlyDescent.net, games.example.org")]).unwrap();
+        assert_eq!(c.games_embed_hosts, ["deadlydescent.net", "games.example.org"]);
+        for bad in ["*.example.com", "1.2.3.4", "[::1]", "example.com:8443", "localhost", "a..b", "-a.com", "x.123"] {
+            assert!(load(&[("GNOME_GAMES_EMBED_HOSTS", bad)]).is_err(), "{bad}");
+        }
+        let mut vars = TWO_ORIGINS.to_vec();
+        vars.push(("GNOME_GAMES_EMBED_HOSTS", "p.gnome.example.com"));
+        let err = load(&vars).unwrap_err();
+        assert!(err.problems.iter().any(|p| p.contains("own app or proxy host")), "{err:?}");
+        vars.pop();
+        vars.push(("GNOME_GAMES_EMBED_HOSTS", "gnome.example.com"));
+        assert!(load(&vars).is_err());
+    }
+
+    #[test]
+    fn oss_and_ads_txt_settings() {
+        assert!(load(&[("GNOME_OSS_FETCH", "sometimes")]).is_err());
+        assert!(load(&[("GNOME_OSS_MAX_MB", "8")]).is_err());
+        assert!(load(&[("GNOME_ADS_TXT", "relative/ads.txt")]).is_err());
+        let c = load(&[("GNOME_ADS_TXT", "/nonexistent/ads.txt")]).unwrap();
+        assert_eq!(c.ads_txt.as_deref(), Some(Path::new("/nonexistent/ads.txt")));
+        assert!(c.warnings.iter().any(|w| w.starts_with("GNOME_ADS_TXT=")));
+    }
+
+    #[test]
+    fn vpn_check_url_rules() {
+        let c = load(&[("GNOME_VPN_CHECK_URL", "")]).unwrap();
+        assert!(c.vpn_check_url.is_none());
+        let c = load(&[("GNOME_VPN_CHECK_URL", "https://check.example.net/json")]).unwrap();
+        assert_eq!(c.vpn_check_url.as_deref(), Some("https://check.example.net/json"));
+        assert!(!c.warnings.iter().any(|w| w.contains("unencrypted")));
+        let c = load(&[("GNOME_VPN_CHECK_URL", "http://127.0.0.1:21060/json")]).unwrap();
+        assert!(c.warnings.iter().any(|w| w.contains("unencrypted")), "{:?}", c.warnings);
+        for bad in ["ftp://x.example/", "https://u:p@x.example/", "https://x.example/#a", "not a url", "/json"] {
+            assert!(load(&[("GNOME_VPN_CHECK_URL", bad)]).is_err(), "{bad}");
+        }
+        assert!(load(&[("GNOME_VPN_CHECK_URL", &format!("https://x.example/{}", "a".repeat(2048)))]).is_err());
+        let err = load(&[("GNOME_VPN_CHECK_URL_V6", "https://ipv6.example.net/json")]).unwrap_err();
+        assert!(err.problems.iter().any(|p| p == "GNOME_VPN_CHECK_URL_V6 requires GNOME_VPN_CHECK_URL"));
+        assert!(load(&[("GNOME_VPN_CHECK_INTERVAL_MIN", "1441")]).is_err());
+        assert_eq!(load(&[("GNOME_VPN_CHECK_INTERVAL_MIN", "0")]).unwrap().vpn_check_interval_min, 0);
+    }
+
+    /// D16 in its five cases, each also silenced by `GNOME_VPN_EGRESS_SHARED_OK=true`.
+    #[test]
+    fn vpn_terms_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let profiles = dir.path().join("profiles.toml");
+        std::fs::write(
+            &profiles,
+            "[[profile]]\nid = \"se\"\nlabel = \"Sweden\"\ncountry_code = \"se\"\ncountry = \"Sweden\"\ncity = \"Stockholm\"\n\
+             provider_note = \"test\"\nwisp_upstream = \"127.0.0.1:21999\"\n",
+        )
+        .unwrap();
+        let path = profiles.display().to_string();
+        type Case<'a> = (&'a [(&'a str, &'a str)], Option<&'a str>);
+        let cases: [Case; 5] = [
+            (&[("GNOME_ACCESS_MODE", "open")], Some(VPN_TERMS_WARNING)),
+            (&[("GNOME_ACCESS_MODE", "accounts"), ("GNOME_REGISTRATION", "open")], Some(VPN_TERMS_WARNING)),
+            (&[("GNOME_ACCESS_MODE", "accounts"), ("GNOME_REGISTRATION", "closed")], None),
+            (&[("GNOME_ACCESS_MODE", "code"), ("GNOME_ACCESS_CODE", "long-enough-code")], Some(VPN_CODE_WARNING)),
+            (
+                &[
+                    ("GNOME_ACCESS_MODE", "code"),
+                    ("GNOME_ACCESS_CODE", "long-enough-code"),
+                    ("GNOME_REGISTRATION", "closed"),
+                ],
+                Some(VPN_CODE_WARNING),
+            ),
+        ];
+        for (vars, expected) in cases {
+            for shared_ok in ["false", "true"] {
+                let mut all = vars.to_vec();
+                all.extend([("GNOME_VPN_PROFILES", path.as_str()), ("GNOME_VPN_EGRESS_SHARED_OK", shared_ok)]);
+                let c = load(&all).unwrap();
+                let got: Vec<&String> =
+                    c.warnings.iter().filter(|w| **w == VPN_TERMS_WARNING || **w == VPN_CODE_WARNING).collect();
+                match (expected, shared_ok) {
+                    (Some(w), "false") => assert_eq!(got, [w], "{vars:?}"),
+                    _ => assert!(got.is_empty(), "{vars:?} {shared_ok}: {got:?}"),
+                }
+                assert!(c.warnings.iter().any(|w| w.starts_with("no exit checks")), "{:?}", c.warnings);
+            }
+        }
+        let quiet = load(&[]).unwrap();
+        assert!(!quiet.warnings.iter().any(|w| w.starts_with("no exit checks") || *w == VPN_TERMS_WARNING));
+        let checked =
+            load(&[("GNOME_VPN_PROFILES", &path), ("GNOME_VPN_CHECK_URL", "https://c.example.net/")]).unwrap();
+        assert!(!checked.warnings.iter().any(|w| w.starts_with("no exit checks")));
     }
 
     #[test]

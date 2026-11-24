@@ -46,6 +46,9 @@ pub enum Command {
     /// Inspect the configuration.
     #[command(subcommand)]
     Config(ConfigCommand),
+    /// The game catalog: import feeds, print statistics, fetch open-source game builds.
+    #[command(subcommand)]
+    Catalog(crate::games::cli::CatalogCommand),
     /// Print version information.
     Version,
 }
@@ -98,6 +101,7 @@ pub fn main() -> ExitCode {
         Command::User(cmd) => user(cmd),
         Command::Filters(cmd) => filters(cmd),
         Command::Config(ConfigCommand::Check) => config_check(),
+        Command::Catalog(cmd) => return crate::games::cli::run(cmd),
         Command::Version => {
             println!("gnome-server {VERSION} ({}-{})", std::env::consts::ARCH, std::env::consts::OS);
             Ok(())

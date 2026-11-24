@@ -77,3 +77,8 @@ onIdle(() => void loadTldList());
 // the idempotent initLibrary() themselves, and Home falls back to its direct IndexedDB reads until then.
 onIdle(() => void import('./library').then((m) => m.initLibrary()));
 onIdle(() => void import('./browser/browser.svelte').then((m) => m.startBrowser()));
+// Games (src/games): registers 'games' while the server offers a catalog, and the "Recently played games" clearer.
+onIdle(() => void import('./games/start').then((m) => m.startGames()));
+// VPN (src/vpn): location and exit status, the tab-strip chip (docs/WAVE-C.md §7). Auto-connect is not here: the
+// browser decides it in its own start, before any tab loads (§8.1).
+onIdle(() => void import('./vpn/start').then((m) => m.startVpn()));

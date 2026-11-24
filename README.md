@@ -2,24 +2,24 @@
 
 # GNOME
 
-GNOME is a self-hostable website that has a web proxy, a browser that runs inside a browser tab, and (later) a games
-page. You run one Rust server, `gnome-server`, plus a small Wisp relay called HolyWisp. People open GNOME in an
+GNOME is a self-hostable website that has a web proxy, a browser that runs inside a browser tab, a games page and a
+VPN page. You run one Rust server, `gnome-server`, plus a small Wisp relay called HolyWisp. People open GNOME in an
 ordinary browser and browse other sites inside it. GNOME is a website only. There is no native app and no
 browser-extension build. Its proxy engines are Scramjet (primary) and Ultraviolet (fallback). Their traffic goes
 through HolyWisp, a Wisp server written in C. Accounts, settings sync and the admin listener are part of
 `gnome-server`. The interface is TypeScript and Svelte 5.
 
-> **Status on 2026-11-19.** GNOME is still being built.
+> **Status on 2026-11-23.** GNOME is still being built.
 > - **Built and tested:** the proxy (Scramjet with Ultraviolet fallback) and the browser (tabs, history, bookmarks,
->   downloads, session restore, settings), with the restyled UI (finished on 2026-11-18). Wave B step 2 passed its
->   final gate on 2026-11-19: every e2e suite ran in Chromium and Firefox (1010 rows passed; 17 rows that measure
->   known limits failed as expected; 6 rows failed and passed on a re-run, see
->   [End-to-end tests](#development)), and real sites were browsed through GNOME's own UI with both engines in both
->   browsers. The admin diagnostics are covered by backend tests and a live run.
-> - **Server side only:** the VPN gateway (routing and health checks work; users cannot pick a location until the VPN
->   page in Wave C).
-> - **Not built yet:** the built-in extensions (Wave B step 3); the Games page and the VPN page (Wave C); benchmarks,
->   the production build pipeline and the deployment files for `gnome-server` (Wave D); the final review (Wave E).
+>   downloads, session restore, settings), with the restyled UI; the built-in extensions (ad and tracker blocking,
+>   privacy protection, the cookie manager, cosmetic filtering; Wave B step 3, 2026-11-21).
+> - **Wave C, done on 2026-11-24:** the Games page, game details and the player (GamePix and reviewed
+>   open-source games by default, the other networks with the operator's publisher IDs), and the VPN page (Connect /
+>   Disconnect, locations, the kill switch, the server's exit check when the operator sets a check service). Each has
+>   its e2e suites in Chromium and Firefox; the final run's results and its open items are in
+>   [docs/PROGRESS.md](docs/PROGRESS.md). A real VPN tunnel has not been tested here (only a stand-in location).
+> - **Not built yet:** benchmarks, the production build pipeline and the deployment files for `gnome-server`
+>   (Wave D); the final review (Wave E).
 >
 > The checklist and plan are in [docs/PROGRESS.md](docs/PROGRESS.md).
 
@@ -50,7 +50,7 @@ works, with the limits named. **Server only** = the server part works, but the i
 | Manual engine choice | Works | Settings → Advanced → Proxy engine: Automatic, Scramjet or Ultraviolet | |
 | Active engine shown | Works | Engine badge in the toolbar (`SJ` / `UV`), with versions in its popover and in About → Browser engine | |
 | HolyWisp / Wisp transport | Works | `holywisp` on `127.0.0.1:6001`. The browser connects through the gateway at `/wisp/` with a short-lived ticket | [services/holywisp](services/holywisp/README.md) |
-| Transports libcurl / epoxy | Works | Settings → Advanced → Transport (default libcurl) | |
+| Transports libcurl / epoxy | Works | Settings → Advanced → Transport (default libcurl) | Content blocking is fully tested over libcurl only. Over epoxy, a blocked `fetch()` can hang instead of failing (open) |
 | Custom Wisp servers | Works (operator opt-in) | `GNOME_ALLOW_CUSTOM_WISP=true`, then Settings → Advanced → Custom Wisp servers | |
 | Rust backend (`gnome-server`) | Works | `gnome-server serve`, with the app, proxy and admin listeners | [backend/README.md](backend/README.md), [API](docs/API.md) |
 | Two-origin isolation and other security features | Works | `GNOME_PROXY_BIND` (local) or `GNOME_PROXY_ORIGIN` + `GNOME_PUBLIC_ORIGINS` (production); see [Security features](#security-features) | [ARCHITECTURE §4.6](docs/ARCHITECTURE.md) |
@@ -71,12 +71,15 @@ works, with the limits named. **Server only** = the server part works, but the i
 | Accounts and sync (settings, bookmarks, history) | Works | Settings → Account & sync. The operator controls it with `GNOME_ACCOUNTS` and `GNOME_REGISTRATION` | [API](docs/API.md) |
 | Access modes: open / code / accounts | Works | `GNOME_ACCESS_MODE`, `GNOME_ACCESS_CODE` | [below](#access-modes-and-accounts) |
 | Admin diagnostics and metrics | Works | `http://127.0.0.1:9091/admin/` (loopback by default) | [below](#admin-diagnostics-logging-and-metrics) |
-| VPN gateway (server-side egress) | Server only | `GNOME_VPN_PROFILES` + one HolyWisp per exit location. The users' control for it is the VPN page (Wave C) | [services/vpn](services/vpn/README.md) |
-| VPN page (location, kill switch, exit check) | Not built (Wave C) | `/vpn` is a placeholder today | [ARCHITECTURE §7](docs/ARCHITECTURE.md) |
+| VPN gateway (server-side egress) | Works (tested with a stand-in location; a real tunnel is not tested) | `GNOME_VPN_PROFILES` + one HolyWisp per exit location; route-bound Wisp tickets; optional exit checks with `GNOME_VPN_CHECK_URL` | [services/vpn](services/vpn/README.md), [below](#vpn-gateway-profiles) |
+| VPN page (location, kill switch, exit check) | Works (Wave C; e2e in Chromium and Firefox with both engines) | `/vpn`: Connect / Disconnect, Automatic or a chosen location, "Block if the location is down", the server's exit check and an optional check from this browser; Settings → VPN | [ARCHITECTURE §7](docs/ARCHITECTURE.md) |
 | Filter-list mirror (server) | Server only | Refreshed automatically, or with `gnome-server filters refresh`; served at `/api/filters` | [below](#filter-lists) |
-| Extensions: ad blocker, tracker blocker, privacy protection, cookie manager, cosmetic filtering | Not built (Wave B step 3) | `/extensions` is a placeholder today. Their settings (`extensions.*`) are already stored and synced, but nothing uses them yet | [docs/WAVE-B3.md](docs/WAVE-B3.md) |
-| Games catalog library + importer | Partial (development tool only) | `cargo run --release -p gnome-catalog --example live_import -- …`; `gnome-server` does not serve it | [crates/catalog](crates/catalog/README.md) |
-| Games page: search, categories, trending, recently added, popular, featured, favorites, recently played; game details and player | Not built (Wave C) | `/games`, `/games/<slug>` and `/play/<slug>` are placeholders today | [research](docs/research/games-sources.md) |
+| Ad blocker, tracker blocker | Works (Wave B step 3; e2e in Chromium and Firefox with both engines, 2026-11-21) | On by default. Blocks requests to ad and tracker servers on sites you open in GNOME, with the filter lists the server mirrors. The toolbar shield shows the count and pauses blocking for one site; Settings → Extensions and `/extensions` turn lists and blockers on or off | [docs/WAVE-B3.md](docs/WAVE-B3.md), [ARCHITECTURE §5.5](docs/ARCHITECTURE.md) |
+| Privacy protection | Works (same tests) | Sends Global Privacy Control, cuts the Referer header, removes tracking parameters from pages you open (Settings → Privacy) | About → Content blocking lists what it does not cover |
+| Cookie manager | Works (same tests) | Blocks third-party cookies by default; per-site rules (allow, until GNOME closes, block); lists and deletes cookies of both engines on `/extensions` → Cookies | |
+| Cosmetic filtering | Works (same tests) | Hides ad frames and page clutter, runs the lists' scriptlets; cookie-notice and annoyance lists are opt-in | |
+| Games catalog (server) | Works (Wave C) | Imported automatically (GamePix 30 s after start, then daily; reviewed open-source games fetched from GitHub); `gnome-server catalog import|stats|fetch-oss`; `/api/games*` | [below](#games-catalog), [crates/catalog](crates/catalog/README.md) |
+| Games page: search, categories, trending, recently added, popular, featured, favorites, recently played; game details and player | Works (Wave C; e2e in Chromium and Firefox) | `/games`, `/games/<slug>`, `/play/<slug>`. Games load directly from their publishers (never proxied); a notice comes before a network's first game. Favorites and recently played stay in this browser | [research](docs/research/games-sources.md) |
 | Production build optimisation | Partial | `npm run build` already minifies, tree-shakes and content-hashes GNOME's code and writes no source maps for it (the vendored engines are copied unmodified, with their `.map` files). Wave D adds precompressed `.br`/`.gz` files (`gnome-server` already serves them when present), image optimisation and opt-in obfuscation | [ARCHITECTURE §8](docs/ARCHITECTURE.md) |
 | Deployment files for `gnome-server` (Docker image, compose, Caddy, systemd, Raspberry Pi notes) | Not built (Wave D) | Only the HolyWisp units/Dockerfile and the VPN compose example exist | [Production notes](#production-notes) |
 | Benchmarks | Not built (Wave D) | | |
@@ -180,10 +183,16 @@ proxied pages). Always run it after a change.
 GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 ./target/release/gnome-server config check
 ```
 
-The full list of variables (42, plus `GNOME_CONFIG`) with defaults and ranges is in
+The full list of variables (65, plus `GNOME_CONFIG`) with defaults and ranges is in
 [backend/README.md](backend/README.md) and [docs/ARCHITECTURE.md §4.2](docs/ARCHITECTURE.md); `config check`
 prints all of them. Other CLI commands: `migrate`, `user create|reset-password`, `filters refresh|status`,
-`version`. Run `gnome-server <command> --help` for details. Exit codes are 0 for OK, 1 for a runtime failure and 2
+`catalog import|stats|fetch-oss`, `version`.
+
+**A fresh server contacts game hosts by itself.** With the defaults, `gnome-server serve` imports the GamePix feed
+30 s after start (then every 24 h; about 16,000 games in about 3 minutes) and downloads the reviewed open-source game
+builds from GitHub (`codeload.github.com`) when the server has a proxy origin. `GNOME_CATALOG_REFRESH_HOURS=0` stops
+the scheduled feed imports (only `catalog import` or the admin listener start one), and `GNOME_OSS_FETCH=manual`
+stops the automatic OSS downloads (only `catalog fetch-oss`). `GNOME_CATALOG_SOURCES=none` turns the games off. Run `gnome-server <command> --help` for details. Exit codes are 0 for OK, 1 for a runtime failure and 2
 for a configuration or usage error.
 
 ### Security features
@@ -254,15 +263,16 @@ says "Your Wisp server does not answer" (retrying with a backoff) when none of t
 ### VPN gateway profiles
 
 GNOME's VPN is **server-side gateway egress only**. Pages opened **inside GNOME** can leave the server through a VPN
-tunnel that you, the operator, set up on the server. The user's device, its other apps and tabs, and GNOME's own
-interface are not routed through it. Nothing is installed on users' devices. GNOME is not affiliated with Mullvad or
-any other VPN provider.
+tunnel that you, the operator, set up on the server. The user's device, its other apps and tabs, GNOME's own
+interface and the games are not routed through it. Nothing is installed on users' devices. GNOME is not affiliated
+with Mullvad or any other VPN provider.
 
 1. Set up a tunnel and **one HolyWisp instance per exit location**, using recipe A (gluetun with Docker) or recipe B
    (host WireGuard with `holywisp@<id>.service`) in [services/vpn/README.md](services/vpn/README.md). Read its
-   section on terms first. Mullvad's terms forbid using the service to provide a VPN-like service to others, so
-   offer VPN locations only on an instance used by you and your household (the same applies to any provider whose
-   terms say so).
+   section on terms first. Run the locations only over connections you are authorized to share with the people who
+   use your server. Mullvad's terms, for example, forbid using the service to provide a VPN-like service to others,
+   so with such a provider offer VPN locations only on an instance used by you and your household. GNOME's access
+   modes do not change what a provider's terms allow.
 2. Describe the locations in a TOML file (format and rules: [services/vpn/profiles.example.toml](services/vpn/profiles.example.toml)):
 
    ```toml
@@ -277,18 +287,45 @@ any other VPN provider.
 
 3. Start the server with `GNOME_VPN_PROFILES=/path/to/profiles.toml`, and restart it after each edit. Each profile is
    served at `/wisp/p/<id>/` on the proxy origin and is health-checked every 60 s. It shows up in
-   `GET /api/vpn/locations`, `/api/health` and `/admin/diagnostics`.
+   `GET /api/vpn/locations`, `/api/health`, `/admin/diagnostics` and on the VPN page.
 
-**What works today.** Gateway routing and health checks, tested with a stand-in HolyWisp with no tunnel behind it
-(it exits from the server's own address: a test, not a VPN). A real VPN tunnel has not been tested here. Users
-cannot choose a location until the VPN page and its settings section arrive in **Wave C**.
+**Who may use it.** `config check` and start-up print a warning when locations are offered to anyone: in `open` mode,
+in `accounts` mode with `GNOME_REGISTRATION=open` (as public as open mode), and, as a reminder, in `code` mode (an
+access code can be passed on). Set `GNOME_VPN_EGRESS_SHARED_OK=true` only if your egress's terms allow every person
+who can use the instance; it silences the warning.
+
+**The VPN page** (`/vpn`). Users press **Connect** to route the pages they open in GNOME through Automatic (the first
+location that is online, kept while it stays online) or a location they chose; **Disconnect** goes back to the
+server's own connection. The connection switch and "Block if the location is down" are kept in each browser only:
+account sync and imported settings never change them. With the kill switch on, pages stop loading while the location
+is down instead of using the server's own connection. Tabs already open when the location changes keep their old
+route until they are reloaded; the page counts them. Wisp tickets are bound to the route the browser chose, so a page
+cannot move itself back to the server's own connection.
+
+**Exit checks (optional, off by default).** GNOME calls no check service unless you set one. With
+`GNOME_VPN_CHECK_URL=https://<your check endpoint>` (HTTPS, answering JSON with `ip`, `country`, `city`), gnome-server
+checks each location's exit through that location's own HolyWisp every `GNOME_VPN_CHECK_INTERVAL_MIN` minutes (15,
+randomly spread) and when a user presses **Check again**; `GNOME_VPN_CHECK_URL_V6` adds the same check through an
+IPv6-only name. A self-hosted check endpoint is described in
+[services/vpn/README.md "A check endpoint you run yourself"](services/vpn/README.md#a-check-endpoint-you-run-yourself)
+(its Caddy and nginx examples have not been run here). Using a provider's public check page automatically needs that
+provider's permission. A failed check is a warning on the VPN page; it never changes the route. Users can also turn
+on "Check this browser's exit" (off by default), which asks the same service through their browser's route. Neither
+check is proof: they report what the service saw.
+
+**What works today.** Gateway routing, health checks, the VPN page, route-bound tickets and the exit check, tested
+with a stand-in HolyWisp with no tunnel behind it (it exits from the server's own address: a test, not a VPN) and a
+local check fixture. A real VPN tunnel has not been tested here.
 
 ### Filter lists
 
 `gnome-server` mirrors 12 built-in content-blocking filter lists (EasyList, EasyPrivacy, uBlock filters, AdGuard URL
 Tracking, Peter Lowe's list, cookie lists, …) plus uBlock Origin's redirect resources and scriptlets (13 entries),
-and serves them at `/api/filters`. **No content blocking uses them yet** (About → Licenses lists them). The built-in
-extensions that will use them come with Wave B step 3.
+and serves them at `/api/filters`. GNOME's built-in extensions (ad blocker, tracker blocker, privacy protection,
+cookie manager, cosmetic filtering) download them from there into each browser, where GNOME compiles them; the
+server builds no filter engine. Users turn the extensions and each list on or off in Settings → Extensions or on the
+Extensions page (`/extensions`); the toolbar shield pauses blocking for one site. About → Licenses lists every list
+with its publisher and license.
 
 - **Automatic refresh.** `GNOME_FILTERS_REFRESH_HOURS` (default 24; `0` turns off automatic fetching). A list's own
   `! Expires` wins, and the interval is clamped to 4 h–7 d.
@@ -305,22 +342,75 @@ extensions that will use them come with Wave B step 3.
 
 ### Games catalog
 
-The Games page, the player and the `/api/games*` routes are **not built yet (Wave C)**. Today:
+Games come only from legitimate sources: official feeds and embeds, and open-source games at pinned commits
+([docs/research/games-sources.md](docs/research/games-sources.md), [crates/catalog](crates/catalog/README.md)).
+Embeds are **never proxied, rewritten, overlaid or ad-blocked**: each game loads in a sandboxed frame directly from its
+publisher, through a small wrapper page (`/play-frame/<slug>`) whose policy allows exactly that game's host.
 
-- `GNOME_CATALOG_REFRESH_HOURS`, `GNOME_CATALOG_SOURCES`, `GNOME_THUMB_PROXY` and `GNOME_THUMB_CACHE_MB` are
-  accepted but have **no effect** (`config check` says so; `/api/config` reports `features.games: false`).
-- The catalog crate's own variables (`GNOME_GAMEPIX_SID`, `GNOME_ITCHIO_*`, …) are not read by the server, and a
-  `GNOME_CONFIG` file rejects them.
-- Developers can try the importer on its own. It is a development tool that uses the system `curl` (checked on
-  2026-11-18 with `--limit 20`; a limited run reports the status `incomplete`, which is expected):
+**Sources.** `GNOME_CATALOG_SOURCES` (default `gamepix,oss`; `none` turns the games off). GamePix and the open-source
+games are on by default; the other networks need your publisher account. What each network asks of you:
+
+| Network | The network requires | GNOME settings | GNOME guarantees |
+| --- | --- | --- | --- |
+| GamePix | **unverified**: the public SID `1` is GamePix's own default; read the publisher terms at my.gamepix.com (behind a login) and use your own SID to be paid | `GNOME_GAMEPIX_SID` | direct frames, referrer origin, no blocking |
+| GameDistribution | a publisher account with your domain, their tags and `ads.txt` lines, a Google Ad Manager account | `GNOME_GD_PUBLISHER_ID`, `GNOME_ADS_TXT`, a known app origin (`GNOME_PUBLIC_ORIGINS` or two origins) | `gd_sdk_referrer_url` = the player page; no monitoring crawler (the importer reads the feed only) |
+| Playgama | an approved partner CLID | `GNOME_PLAYGAMA_CLID`; developer hosts in `GNOME_GAMES_EMBED_HOSTS` after review | the CLID in every embed URL |
+| GameMonetize | your site added in the dashboard | `GNOME_GAMEMONETIZE_ENABLED=true` | ≥ 10 s between feed requests |
+| Famobi | an approved affiliate ID (≥ 50k visits a month) | `GNOME_FAMOBI_AFFILIATE_ID` | the ID in every embed URL |
+| itch.io, js13kGames | none (discovery and link-out) | `GNOME_CATALOG_SOURCES` | never framed |
+| Open-source games | each license | `GNOME_OSS_*` | the license panel, the LICENSE file, the pinned source |
+
+Disclose the proxy feature when you apply to networks whose terms bar "hacking" content (GameDistribution §6.2(iii)(c),
+Playgama §6.1), get each network's written confirmation for a site that includes a proxy, and keep "unblocked"
+marketing off the games pages. **Thumbnails**: caching or re-serving the networks' images is unverified against each
+network's terms: confirm it with each network, or set `GNOME_THUMB_CACHE_MB=0` (thumbnails are still checked, but
+nothing is stored).
+
+- **Embed hosts.** A game is framed only when its embed host is a fixed host of an enabled source, or a developer host
+  you approved in `GNOME_GAMES_EMBED_HOSTS` (exact DNS names, comma-separated; Playgama serves some games from
+  developer hosts). Catalog data never adds a host. `/admin/diagnostics` → `games.embed_hosts` lists the `pending`
+  hosts with their game counts; such games say "can't be played here" and link to their source.
+- **Open-source games.** The built-in manifest (`crates/catalog/oss-games.toml`) enables only entries whose pinned
+  commit was reviewed (no storage clearing, no external loads; recorded in the manifest): on 2026-11-23 `2048`,
+  `javascript-racer`, `javascript-breakout`, `bullethell` and `clumsy-bird`. gnome-server downloads each one from
+  `codeload.github.com` at its commit (`GNOME_OSS_FETCH=auto`, or `gnome-server catalog fetch-oss`), into
+  `GNOME_OSS_GAMES_DIR` (default `$GNOME_DATA_DIR/oss-games`, at most `GNOME_OSS_MAX_MB`), and serves them from the
+  **proxy origin** under `/oss/<slug>/`, so they need two origins (`GNOME_PROXY_BIND` or `GNOME_PROXY_ORIGIN`; in
+  single-origin mode the `oss` source is disabled with a warning). Each game page shows its license, copyright,
+  repository and commit and links its LICENSE file.
+- **Thumbnails** go through `/api/thumb/<id>` (`GNOME_THUMB_PROXY=true`): the server fetches them from the enabled
+  sources' image hosts only, checks type and size, and caches them on disk (`$GNOME_DATA_DIR/thumbs/`, at most
+  `GNOME_THUMB_CACHE_MB`, default 256 MiB). On a Raspberry Pi with an SD card, keep the cache small or at `0`, or put
+  `GNOME_DATA_DIR` on other storage, to spare the card's writes.
+- **`/ads.txt`.** `GNOME_ADS_TXT=/absolute/path/ads.txt` serves that file (≤ 64 KiB) on the app origin, with the lines
+  your networks give you.
+- **CLI.** `gnome-server catalog import [--source S] [--limit N]` imports now (a limited run reports `incomplete`,
+  which is expected), `catalog stats` prints the counts, `catalog fetch-oss [--slug S]` fetches open-source builds.
+  The admin listener has `POST /admin/catalog/import`, `POST /admin/catalog/oss-fetch`, and per-game feature and
+  hide switches ([docs/API.md](docs/API.md) "Admin"). Run the `catalog` commands with the same `GNOME_*` settings as
+  the server (data directory and binds):
 
   ```sh
-  cargo run --release -p gnome-catalog --example live_import -- import --db /tmp/catalog.db --source gamepix --limit 200
-  cargo run --release -p gnome-catalog --example live_import -- report --db /tmp/catalog.db
+  GNOME_DATA_DIR=./data GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 ./target/release/gnome-server catalog import --source gamepix --limit 200
+  GNOME_DATA_DIR=./data GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 ./target/release/gnome-server catalog fetch-oss
+  GNOME_DATA_DIR=./data GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 ./target/release/gnome-server catalog stats
   ```
 
-Games come only from legitimate sources: official embeds and feeds, and open-source games
-([docs/research/games-sources.md](docs/research/games-sources.md), [crates/catalog](crates/catalog/README.md)).
+- **Scale** (measured 2026-11-23 on the development machine): a full GamePix import took 168 s for 16,041 games
+  (15,722 listed), with gnome-server's memory at most 44 MiB and about 2 % of one CPU; the catalog database was about
+  49 MB. Paging through every game (158 pages of 100) took under 0.2 s, at most 14 ms a page. The Games page's "All
+  games" grid keeps at most 15,000 games: scrolling A–Z ends there (search, categories and other sorts still reach
+  the rest). Scrolling it to that end loaded 313 pages, kept at most 50 tiles in the page and held 60 frames a second
+  in Chromium (95th percentile 16.8 ms); in Firefox the 95th percentile was 33.5 ms.
+
+**Privacy.** Before the first game of a network loads in a browser, the player says "This game loads from <network>.
+<network> and its advertisers see your IP address and may set cookies." and waits for **Play**; the choice is kept
+in that browser (Settings → Privacy → Clear browsing data → "Game network choices", or "Forget" on the Games page).
+Playing a game tells the network and its advertisers the visitor's IP address, and tells the network your server's
+address (the frames send your origin as the referrer). To keep your server unlisted there, use
+`GNOME_CATALOG_SOURCES=none`. GNOME is not a
+consent tool: if your server has visitors in the EU, you need your own consent solution, and the networks' rules for
+players under 13 apply. Favorites and recently played stay in each browser and are not synced.
 
 ### Account sync
 
@@ -356,8 +446,10 @@ The admin listener (`GNOME_ADMIN_BIND`, default `127.0.0.1:9091`; empty disables
 ### Everything on
 
 The example below turns on every feature that exists today, on loopback. It was checked with `config check` and
-run (with other ports) on 2026-11-18. In that run, the access-code dialog appeared, browsing worked after entering
-the code, the test VPN profile reported `up`, and the admin listener answered 401 without the token and 200 with it.
+run (with other ports) on 2026-11-23: the access-code dialog appeared ("Enter code"), browsing worked after entering
+the code, the test VPN profile reported `up` and showed on `/vpn`, the games
+were imported (GamePix and the open-source games), `/ads.txt` answered, and the admin listener answered 401 without
+the token and 200 with it. The exit check stays off until you set your own check endpoint (the commented line).
 
 ```sh
 # terminal 1: the default HolyWisp, plus a second one standing in for a VPN exit (no tunnel: a test, not a VPN)
@@ -376,6 +468,7 @@ city = "Gothenburg"
 wisp_upstream = "127.0.0.1:6002"
 EOF
 printf '[[list]]\nid = "plowe-0"\ndisabled = true\n' > data/lists.toml
+printf 'example.com, pub-0000000000000000, DIRECT\n' > data/ads.txt   # the lines your game networks give you
 
 # terminal 2: gnome-server
 export GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 GNOME_ADMIN_BIND=127.0.0.1:9091
@@ -385,6 +478,9 @@ export GNOME_ACCOUNTS=true GNOME_REGISTRATION=closed
 export GNOME_ALLOW_CUSTOM_WISP=true
 export GNOME_VPN_PROFILES=$PWD/data/profiles.toml
 export GNOME_FILTERS_REFRESH_HOURS=24 GNOME_FILTER_LISTS_FILE=$PWD/data/lists.toml
+export GNOME_CATALOG_SOURCES=gamepix,oss GNOME_CATALOG_REFRESH_HOURS=24 GNOME_OSS_FETCH=auto
+export GNOME_THUMB_PROXY=true GNOME_THUMB_CACHE_MB=256 GNOME_ADS_TXT=$PWD/data/ads.txt
+# export GNOME_VPN_CHECK_URL=https://check.example.org/json   # your own check endpoint (services/vpn/README.md)
 export GNOME_SOURCE_URL=https://example.org/your-gnome-source   # AGPL §13 source link shown in About
 export GNOME_LOG=info GNOME_LOG_FORMAT=json
 ./target/release/gnome-server config check
@@ -396,11 +492,14 @@ Check it from any terminal (the token is written out, because it is only exporte
 
 ```sh
 curl -s http://127.0.0.1:8080/api/vpn/locations
+curl -s http://127.0.0.1:8080/api/games/status      # about a minute after start: listed > 0
+curl -s http://127.0.0.1:8080/ads.txt
 curl -s -H "Authorization: Bearer replace-with-a-long-random-token" http://127.0.0.1:9091/admin/diagnostics
 ```
 
 In a browser, http://127.0.0.1:9091/admin/ asks for HTTP Basic auth: any username, the token as the password.
-Then open http://127.0.0.1:8080/ and enter the access code when asked. Sign in as `alice` under Settings → Account
+Then open http://127.0.0.1:8080/ and enter the access code when asked; `/games` lists the games and `/vpn` offers
+the test location. Sign in as `alice` under Settings → Account
 & sync to use sync. To stop, press Ctrl+C in terminal 2 and run `kill %1 %2` in terminal 1.
 
 ## Using GNOME
@@ -414,7 +513,11 @@ Then open http://127.0.0.1:8080/ and enter the access code when asked. Sign in a
 | `/downloads` | Downloads list |
 | `/settings` | Settings |
 | `/about` | How it works, browser engine versions and known limits, privacy, shortcuts, diagnostics, licenses, source link |
-| `/games`, `/vpn`, `/extensions` | Placeholders until their wave. Their settings sections stay hidden, and their buttons lead to "… settings are not available yet" |
+| `/extensions` | The built-in extensions: overview with this session's counts, filter lists, site rules (allowlist and per-site settings), the cookie manager, status and how it works |
+| `/games` | The games: search, categories, shelves (Featured, Trending, Popular, Recently added, Favorites, Recently played) and "All games" as a grid or list. Settings → Games (card size, sort, hidden categories, touch-screen games only, recently played) |
+| `/games/<slug>` | A game's page: description, how to play, tags, more like it; for open-source games the license panel |
+| `/play/<slug>` | The player: the game in a sandboxed frame straight from its publisher, Fullscreen, Favorite; the notice before a network's first game |
+| `/vpn` | The VPN page: status, Connect / Disconnect, locations, the exit check, the kill switch and other switches, and what the VPN covers. Shown in every build; without locations it says the server offers none. Settings → VPN |
 
 In the address bar, `gnome://<page>` (for example `gnome://settings`) opens a GNOME page. Anything that is not an
 address is searched with the search engine set in Settings → Browser: DuckDuckGo by default, or Google, Bing, Brave
@@ -466,16 +569,28 @@ Settings live in this browser. With an account and Sync on, they also sync to th
   GNOME account, settings, history or bookmarks, which live on the app origin. It can still add fake entries to your
   history, and it can plant enough cookies to stop GNOME loading until you clear them (the two loopback ports share
   cookies, and a proxy hostname under the app's domain can set `Domain=`). A fix is a Wave D decision.
-- **Sites are not kept apart as in a normal browser.** Neither engine enforces the cross-origin rules (CORS), and
-  Ultraviolet sends every cookie of a site with every request to it, ignoring SameSite. So any site you open in GNOME,
+- **Sites are not kept apart as in a normal browser.** Neither engine enforces the cross-origin rules (CORS): a page
+  can read other sites' responses a browser would refuse it, and requests that need a preflight are sent without
+  one. Since Wave B step 3 the cookie manager blocks third-party cookies by default in both engines (a site's fetch to
+  another site carries none of its cookies), GNOME refuses cookies set for another site's domain, and Ultraviolet
+  follows SameSite as Chromium does. With third-party cookies allowed, any site you open in GNOME,
   not only one built to attack GNOME, can read pages of other sites you are signed in to inside GNOME (under
-  Scramjet: those whose cookies are `SameSite=None`) and send them forged requests. Don't sign in to sensitive
-  accounts inside GNOME. Wave B step 3's cookie manager (blocking third-party cookies by default) is the planned
-  mitigation.
+  Scramjet: those whose cookies are `SameSite=None`; in Ultraviolet the same) and send them forged requests, and a
+  site built to attack GNOME can do so in every mode. Don't sign in to sensitive accounts inside GNOME.
 - **The WebRTC block** stops ordinary use, but a site built to get around it can still reveal your IP address.
   "Allow" sends WebRTC traffic directly, outside GNOME. In Chromium a site built to attack GNOME can also make the
   browser open a connection (TCP and TLS, no request) to a host it chooses, which shows that host your IP address.
-- **The address bar and the VPN exit check** show what pages report. They are not proof.
+- **The address bar and the VPN exit check** show what pages report or what the check service saw. They are not
+  proof.
+- **Games** load directly from their publishers, not through GNOME's browser engine or the VPN: the network and its
+  advertisers see the visitor's IP address and may set cookies and show ads, and GNOME's blocking does not apply to
+  them. GNOME's keyboard shortcuts do not reach a game that has the focus. Open-source games that are not marked
+  isolated run on the proxy origin and share its storage with the proxied pages. Firefox ignores most of the app's
+  `Permissions-Policy`; there, the game frame's `allow` attribute is what limits a game.
+- **The VPN** routes only the pages opened in GNOME (not the device, other tabs, GNOME's interface, games, or WebRTC
+  set to Allow). A page built to attack GNOME can still reveal the device's address (see WebRTC above). Exit checks
+  report what the check service saw and are not proof. After a location change, tabs that were already open keep
+  their old route until they are reloaded.
 - **Permissions.** Camera, microphone, location and notifications are never available to proxied pages. Autoplay and
   fullscreen settings are enforced in Chromium; in Firefox only fullscreen is (Firefox does not implement the
   autoplay permissions policy). They hold for ordinary sites: a site built to attack GNOME can lift them for itself.
@@ -519,7 +634,7 @@ Settings live in this browser. With an account and Sync on, they also sync to th
 | `npm run dev:engine` | Copies `vendor/` once, then watch-builds the engine host and `sw.js` into `dist/` (`index.html` is left alone) |
 | `npm run preview` | Serves the built `dist/` (or `GNOME_DIST_DIR`) on `127.0.0.1:4173` and, like `npm run dev`, proxies `/api` to `GNOME_DEV_BACKEND`. Browsing there needs `GNOME_PUBLIC_ORIGINS` to include `http://127.0.0.1:4173` (not tested) |
 | `npm run check` | `svelte-check` plus `tsc` for the app and the service worker |
-| `npm test` | Vitest unit tests (74 files, 951 tests on 2026-11-19) |
+| `npm test` | Vitest unit tests (1497 tests on 2026-11-23) |
 | `npm run build:e2e` | Build with test hooks for the e2e runner. **Never deploy it** |
 | `npm run qa:visual` | Screenshot QA against `npm run dev -- --port 21000 --strictPort` (or any app URL in `GNOME_QA_URL`). Set `GNOME_QA_OUT`, or it writes into `docs/screenshots/foundation/` |
 
@@ -546,15 +661,20 @@ other's dependency cache (every page then fails with "Failed to fetch dynamicall
 `GNOME_STATIC_RELOAD=true` (development only) makes the server pick up new builds without a restart. Without it,
 run `npm run build` and restart `gnome-server` after each change.
 
-**Rust** (from the repository root; each of these passed on 2026-11-19):
+**Rust** (from the repository root; each of these passed on 2026-11-23):
 
 ```sh
-cargo test --workspace --locked                                  # 432 passed, 2 ignored
+cargo test --workspace --locked                                  # 500 passed, 5 ignored
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
-# the 2 ignored tests run real HolyWisp + gnome-server and need network; HOLYWISP_BIN must be an absolute path
+# ignored tests that need the network: real HolyWisp + gnome-server (HOLYWISP_BIN must be an absolute path),
+# a GamePix import with one thumbnail, and the fetch of every enabled open-source game from GitHub
 HOLYWISP_BIN=$PWD/services/holywisp/build/$(uname -m)/holywisp cargo test -p gnome-server --test holywisp_e2e -- --ignored --nocapture
+cargo test -p gnome-server --test games_online --test games_oss -- --ignored
 ```
+
+The fifth ignored test (`vpn_exit` `online_check_through_holywisp`) needs `HOLYWISP_BIN` and `VPN_CHECK_ONLINE_URL`
+pointing at a check endpoint you run; it was not run here.
 
 **End-to-end tests** ([tests/e2e/README.md](tests/e2e/README.md), [tests/e2e/engine/README.md](tests/e2e/engine/README.md)):
 
@@ -573,11 +693,17 @@ node engine/run.mjs --browser all --build-server # or point GNOME_SERVER_BIN at 
     the suites' own fixture servers +200..+229 (`HOST_E2E_PORT_BASE`, `SHELL_E2E_PORT_BASE`,
     `LIBRARY_E2E_PORT_BASE` and `BACKEND_E2E_PORT_BASE` still override one block each). Keep the range below 32768,
     where Linux starts handing out outgoing ports.
-  - The full run (every suite in both browsers, plus the standalone suites) on 2026-11-19, Wave B step 2's final
-    gate: 1010 passed, 2 skipped, 17 failed as expected (rows marked `expectFail` that measure known limits) and 6
-    failed and passed on a re-run. Four of those six were the intermittent connection error under Known limitations
-    (Firefox, Scramjet; the MDN row of `host-leak sites` needed a second re-run); the others were a history-visit
-    timeout (Chromium) and the update apply step at a reload (Firefox, ENGINE-PROTOCOL §2.5).
+  - The full run (every suite in both browsers, plus the standalone suites) on 2026-11-24, Wave C's final step:
+    Chromium 798 passed, 13 failed, 21 skipped; Firefox 788 passed, 19 failed, 23 skipped. The failures are rows marked
+    `expectFail` that measure known limits (About → Browser engine and Content blocking list them) and the `sw`
+    build-id row, which fails only with `--no-build` and passes with the runner's own build; details are in
+    [docs/PROGRESS.md](docs/PROGRESS.md) ("RESUME HERE"). Most skipped rows are Wave C rows not written yet or
+    rows that need the internet.
+- **Games and VPN suites (Wave C).** `backend-games`, `games-ui` and `games-player` are standalone suites with their
+  own servers: they replay real feed captures (`gnome-server catalog import --replay <index.json>`, never contacting a
+  host) and use GNOME's own test game for the open-source rows. `vpn-ui` runs on the runner's stack (a second HolyWisp
+  as the test location, a local check fixture). Rows that need the internet (B16: one GamePix thumbnail through the
+  proxy) are skipped unless `GAMES_E2E_ONLINE=1`.
 - **Other QA scripts:** `tests/e2e/stack/stack-qa.mjs` (HTTP and Wisp checks without a browser; set `GNOME_QA_APP`
   and `GNOME_QA_PROXY` to a running stack), `tests/e2e/settings/settings-qa.mjs`, `settings-features-qa.mjs` and
   `tests/e2e/about/about-qa.mjs`. Each script's header lists its variables.
@@ -631,7 +757,7 @@ configuration, a systemd unit for `gnome-server`, Raspberry Pi 4 notes, the rest
 ```
 backend/            gnome-server (Rust): API, gateway, accounts, filters, VPN profiles, admin listener
 crates/net/         gnome-net: SSRF-safe outbound HTTP client and IP policy
-crates/catalog/     gnome-catalog: game catalog importers and search (not served yet; Wave C)
+crates/catalog/     gnome-catalog: game catalog importers and search (served by gnome-server's games module)
 frontend/           Svelte 5 + TypeScript app, engine host (engine/), service worker (src/sw/)
 services/holywisp/  pinned HolyWisp build, gnome.conf, systemd units, Dockerfile
 services/vpn/       VPN egress recipes and profiles example

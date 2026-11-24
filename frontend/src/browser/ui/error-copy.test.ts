@@ -39,9 +39,20 @@ describe('content blocker texts (WAVE-B3 C5b, §7.1)', () => {
     expect(blockedCategory('blocked:ads')).toBe('ads');
     expect(blockedCategory('blocked:evil')).toBeNull();
     expect(blockedCategory('Blocked: you must call us')).toBeNull();
-    expect(errorCopy({ kind: 'blocked', detail: 'blocked:security' }, ctx)).toEqual({ glyph: 'blocked', title: 'Blocked by GNOME', body: 'This site is on a list of scam and malware sites.' });
+    expect(errorCopy({ kind: 'blocked', detail: 'blocked:security' }, ctx)).toEqual({ glyph: 'blocked', title: 'Blocked by GNOME', body: 'This site is on a list of scam and malware sites.', vpnLink: false, exitLine: null });
     expect(errorCopy({ kind: 'blocked', detail: 'blocked:ads' }, ctx).body).toMatch(/^GNOME’s content blocker stopped this page from loading/);
     expect(errorCopy({ kind: 'blocked', detail: 'anything' }, ctx).body).toBe('GNOME’s content blocker stopped this page from loading.');
     expect(blockedReason(null)).toBe('GNOME’s content blocker stopped this page from loading.');
+  });
+
+  it('on the profile route: the Open VPN page link, and the exit-check line while the server check fails (WAVE-C §8.1)', () => {
+    const base = { host: 'example.com', killSwitch: true, engine: 'Scramjet' };
+    const on = { label: 'E2E · live', status: 'up' as const };
+    expect(errorCopy({ kind: 'network' }, { ...base, vpn: null })).toMatchObject({ vpnLink: false, exitLine: null });
+    for (const kind of ['network', 'timeout', 'gateway', 'engine'] as const) {
+      expect(errorCopy({ kind }, { ...base, vpn: on })).toMatchObject({ vpnLink: true, exitLine: null });
+      expect(errorCopy({ kind }, { ...base, vpn: on, exitFails: true }).exitLine).toBe('The exit check through E2E · live fails too.');
+    }
+    expect(errorCopy({ kind: 'gateway' }, { ...base, vpn: { label: 'E2E · down', status: 'down' }, exitFails: true })).toMatchObject({ title: 'This VPN location is down', vpnLink: true, exitLine: 'The exit check through E2E · down fails too.' });
   });
 });

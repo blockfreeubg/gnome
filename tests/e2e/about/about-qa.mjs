@@ -169,10 +169,11 @@ async function structure(page) {
   });
   check(crates.rows > 100 && crates.rows === crates.count, `crate table lists every crate version (${crates.rows} rows, count ${crates.count})`);
   // The built-in browser ships (Wave B): its engines are credited and its tab and page shortcuts are listed. Content
-  // blocking and engine zoom are not offered on this page (no extensions feature; the engine has not started here).
+  // blocking ships in every build since 2026-11-21 (registerFeature('extensions') unconditionally), so its group is
+  // listed; engine zoom is not offered on this page (the engine has not started here).
   const groups = await page.locator('.about .group-title').allInnerTexts();
   check(groups.includes('Proxy engines and transports'), 'engines are listed now that the build ships the browser');
-  check(!groups.includes('Content blocking'), 'content blocking is not listed while the build does not ship it');
+  check(groups.includes('Content blocking'), 'content blocking is listed: every build ships it');
   const shortcuts = await page.locator('.about section[aria-labelledby="shortcuts"] dt').allInnerTexts();
   check(
     shortcuts.includes('Command palette') && shortcuts.includes('New tab') && shortcuts.includes('Find in page') && !shortcuts.includes('Zoom in'),

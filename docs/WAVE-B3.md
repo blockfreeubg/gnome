@@ -2325,9 +2325,10 @@ Chromium 156 and Firefox 157), with suite files named after their lane.
   trusted=… default=…`. The runner writes a `GNOME_FILTER_LISTS_FILE` TOML (into the run directory) that disables
   every built-in filter list, keeps `ubo-resources` (fetched from its upstream; with `--offline`, the pinned copy
   `fixtures/blocker/lists/ubo-resources.json` as a `file` source of the built-in entry, §8) and adds every
-  `lists/*.txt` as an x5 `file` list, plus a **generated big list** `big.txt` (`default=false`, `max_mb = 16`): 400,000
-  distinct lines `||big-<n>.localhost^`, ~9.6 MB of text, which serializes to more than 16 MiB (rows S4, U11 turn it
-  on). A second runner mode `--blocker-real` keeps the built-in registry (internet) for §12.3.
+  `lists/*.txt` as an x5 `file` list, plus a **generated big list** `big.txt` (`default=false`, `max_mb = 16`): 550,000
+  distinct lines `||big-<n>.localhost^`, 13.1 MB of text, which serializes to more than 16 MiB (22.8 MB alone, 23.5 MB
+  as the set with the test lists; 400,000 lines give only 15.6 MB: measured 2026-11-20 with @ghostery/adblocker 2.20.3
+  and the D12 configuration; rows S4, U11 and V10 turn it on). A second runner mode `--blocker-real` keeps the built-in registry (internet) for §12.3.
 - **E2E-only test commands** (x1's `#testHandlers`, never in production builds): `test.blocker {holdBuild, releaseBuild,
   plant, corrupt}` (fail-open rows, cache attacks through the engine-host realm), `test.blockerExposure` (the scoped
   maps the engine host holds, for A6). There are no `test.cosmetic`/`test.providers` commands (§5.4).
@@ -2501,7 +2502,18 @@ editor shows the "receives all cookie rules" sentence.
 unconditional only when every cell passes (until then e2e builds offer `blocker` through D19's switch, and production
 builds keep ALLOW_ALL); `expectFail` is allowed only for rows this plan marks **[unproven]** or conditional whose
 fallback About states (A0 for Scramjet's client path with the upstream report, A7, the D10 UV rewriter, D11, D16 and
-the §4.4 async-tap fallbacks, V2 beyond 5 %). Budgets of §10.2 are measured in the same run (first build, cache load,
+the §4.4 async-tap fallbacks, V2 beyond 5 %). **Integration result (2026-11-21):** the rows that stay `expectFail` are exactly A0 (all four
+cells: borrow-parent, a child realm's native `frameElement` getter, and Scramjet's client global), A7 (Ultraviolet,
+both browsers), cs-href (all four cells: both engines rewrite `href`), P4's `document.referrer` part (Firefox ×
+Scramjet), P6m (Scramjet, both browsers: `<meta name="referrer">`) and P12 (Firefox, both engines: workers do not
+run); V8 is recorded `skip` in Firefox × Ultraviolet (the dedicated worker never starts). Each is in About's known
+limitations. `blocker` was offered, the D19 switch removed and `registerFeature('extensions')` made unconditional in
+that step. **Gate result (2026-11-23):** the full runner (every suite) in Chromium and Firefox leaves only the rows
+above, plus one real failure: `host-hooks hooks:unregistered` under Scramjet. The D16 backstop's block marks
+outlived a hooks change; they are now cleared on every change. The epoxy pass (`E2E_BLOCKER_TRANSPORT=epoxy`) needed a
+fixture fix (epoxy's absolute-form WebSocket target, N10). It still fails N11, N14 (a blocked `fetch()`/XHR never settles) and
+N15 in both engines, and N13b and N16 under Ultraviolet; in Firefox also N7, N9 and `blocker-uv` V1/V2. These rows are open (PROGRESS Deferred items). Over
+libcurl, the default, every row passes. Budgets of §10.2 are measured in the same run (first build, cache load,
 engines to the SW, per-page main-thread time, chunk sizes, both browsers) and, if a Raspberry Pi 4 is available,
 there.
 

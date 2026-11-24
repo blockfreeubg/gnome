@@ -4,13 +4,11 @@
  * `npm run build:e2e`). They are declared here, module-locally, so this file also compiles (and the unit tests run)
  * where no build defines them: a missing build id reads as `dev`, a missing test flag as false.
  */
-import { CAPABILITIES } from '../shared/engine-protocol';
 import { VENDOR_PACKAGES } from '../shared/proxy-origin';
-import type { Capability, EngineVersions } from '../shared/engine-protocol';
+import type { EngineVersions } from '../shared/engine-protocol';
 
 declare const __GNOME_BUILD__: string | undefined;
 declare const __GNOME_ENGINE_TEST__: boolean | undefined;
-declare const __GNOME_ENGINE_TEST_CAPABILITIES__: readonly string[] | undefined;
 
 const BUILD_RE = /^[A-Za-z0-9._+-]{1,64}$/;
 
@@ -19,20 +17,6 @@ export const BUILD: string = typeof __GNOME_BUILD__ === 'string' && BUILD_RE.tes
 
 /** True only in builds made for the e2e harness: `test.*` commands exist only then (ENGINE-PROTOCOL §3). */
 export const ENGINE_TEST: boolean = typeof __GNOME_ENGINE_TEST__ === 'boolean' ? __GNOME_ENGINE_TEST__ : false;
-
-/**
- * WAVE-B3 D19: capabilities this e2e build offers before production does (`GNOME_ENGINE_TEST_CAPABILITIES`), only
- * known ones and only in e2e builds; [] everywhere else. The core adds them to what it offers and reports.
- */
-export const TEST_CAPABILITIES: readonly Capability[] = testCapabilities(
-  ENGINE_TEST,
-  typeof __GNOME_ENGINE_TEST_CAPABILITIES__ === 'object' && Array.isArray(__GNOME_ENGINE_TEST_CAPABILITIES__) ? __GNOME_ENGINE_TEST_CAPABILITIES__ : [],
-);
-
-export function testCapabilities(engineTest: boolean, raw: readonly unknown[]): Capability[] {
-  if (!engineTest) return [];
-  return CAPABILITIES.filter((c) => raw.includes(c));
-}
 
 /** Debug builds (Vite dev server, e2e builds) validate every event they emit against the protocol (a self-check). */
 export const SELF_CHECK: boolean = ENGINE_TEST || (import.meta.env?.DEV ?? false);

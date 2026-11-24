@@ -16,7 +16,8 @@ import { shell } from '../app/shell.svelte';
 import { clearStatus, reportStatus } from '../app/status';
 import { toast } from '../app/overlays/toast.svelte';
 import { dispatchForwardedShortcut, isForwardedDispatch, onForwardedShortcut, register } from '../app/shortcuts';
-import { api, isApiError, requestWispTicket } from '../lib/api';
+import { isApiError, requestWispTicket, type TicketRoute } from '../lib/api';
+import { decideAutoConnect, vpnState } from '../vpn/state.svelte';
 import { appEvents } from '../lib/events';
 import { account } from '../settings/account.svelte';
 import { isApplePlatform } from '../lib/platform';
@@ -50,6 +51,8 @@ import {
   type InitPayload,
   type InitResult,
   type TabStart,
+  type VpnVerifyResult,
+  type WispRoute,
 } from '../shared/engine-protocol';
 import { decideOpen, enginePermissionsFor, resolveEnginePermissions, ruleFor, type ResolvedPermissions } from '../shared/site-rules';
 import { setBridge, type OpenOptions } from './bridge';
@@ -57,7 +60,7 @@ import { compromiseSignals, EngineClient, EngineCommandError, type EngineClientS
 import { createDomEmbedder, type DomEmbedder } from './engine/embed';
 import { engineFacts, rememberEngineFacts } from './engine/facts.svelte';
 import { buildEngineSettings, chooseRoute, NO_VPN_LOCATION } from './engine/snapshot';
-import { TicketMinter } from './engine/tickets';
+import { sameRoute, TicketMinter, type MintOutcome } from './engine/tickets';
 import { detectStart, isFreshStart, loadSession, saveSession } from './session';
 import { parseSession, TabModel, type Tab } from './tabs.svelte';
 
@@ -165,8 +168,21 @@ class Browser {
   /** When each tab's page last opened a tab with a gesture (#onOpenRequest). */
   #gestureOpenAt = new Map<number, number>();
   #switched = new Map<number, EventMap['tab.engineSwitched']>();
-  /** `/api/vpn/locations` statuses (app origin): the app's own facts about the VPN route (ENGINE-PROTOCOL §6.4, §6.13). */
-  #vpnStatus: Record<string, 'up' | 'down' | 'unknown'> = $state.raw({});
+  /**
+   * `/api/vpn/locations` statuses (app origin): the app's own facts about the VPN route (ENGINE-PROTOCOL §6.4,
+   * §6.13). One source of truth (WAVE-C §8.1): the VPN state's poll (vpn/state.svelte.ts), health status only (D14).
+   */
+  get #vpnStatus(): Readonly<Record<string, 'up' | 'down' | 'unknown'>> {
+    return vpnState().statusMap();
+  }
+  /** The Automatic location this app page pinned (D17); null until one was picked, and again after the VPN went off. */
+  #autoPinned: string | null = $state(null);
+  /** The route of the ticket the engine host holds (D23); null before the first. */
+  #ticketRoute: TicketRoute | null = null;
+  /** A fresh start whose auto-connect decision waits for /api/config (made before the engine host is created). */
+  #autoConnectPending = false;
+  /** Tabs that were live before the last route change and have not loaded a page since (the VPN page's line). */
+  #previousRouteTabs = $state.raw<ReadonlySet<number>>(new Set());
   #offs: Array<() => void> = [];
 
   // ── Start-up ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -203,29 +219,24 @@ class Browser {
           void this.filterListing.listing;
           untrack(() => this.#scheduleSnapshot());
         });
-        // Session: written a moment after any change of the tabs.
+        // Session: written a moment after any change of the tabs, never before start() has read the stored one (a
+        // fresh start waits for /api/config first, §8.1: an early write of the still-empty tab list replaced the
+        // stored tabs it was about to restore).
         let saveTimer: ReturnType<typeof setTimeout> | null = null;
+        const save = (): void => {
+          saveTimer = this.#started ? null : setTimeout(save, 800);
+          if (this.#started) void saveSession(this.model.snapshot());
+        };
         $effect(() => {
           const snap = this.model.snapshot(0);
           void JSON.stringify(snap);
           if (saveTimer) clearTimeout(saveTimer);
-          saveTimer = setTimeout(() => void saveSession(this.model.snapshot()), 800);
+          saveTimer = setTimeout(save, 800);
         });
-        // VPN location status for the route choice (kill switch rules) and error wording.
+        // VPN location status for the route choice (kill switch rules) and error wording: the VPN state's poll.
         $effect(() => {
-          const on = settings.value.vpn.mode === 'gateway' && server.config?.features.vpn_gateway === true;
-          if (!on) return;
-          const load = (): void =>
-            void api
-              .get<{ profiles?: Array<{ id: string; status: 'up' | 'down' | 'unknown' }> }>('/api/vpn/locations', { timeoutMs: 8000 })
-              .then((r) => {
-                this.#vpnStatus = Object.fromEntries((r.profiles ?? []).filter((p) => typeof p.id === 'string').map((p) => [p.id, p.status]));
-                this.#scheduleSnapshot();
-              })
-              .catch(() => undefined);
-          load();
-          const t = setInterval(load, 60_000);
-          return () => clearInterval(t);
+          void this.#vpnStatus;
+          untrack(() => this.#scheduleSnapshot());
         });
       }),
     );
@@ -269,6 +280,13 @@ class Browser {
     this.#offs.push(() => this.filterListing.stop());
     const kind = await detectStart();
     const fresh = isFreshStart(kind);
+    // Auto-connect (WAVE-C D12, §8.1): decided here, before any tab is made live or a deep link opens (both wait for
+    // this start); without /api/config yet, right before the engine host is created (#ensureEngine).
+    if (fresh) {
+      if (!server.config) await server.refresh().catch(() => undefined);
+      if (server.config) this.#decideAutoConnect();
+      else this.#autoConnectPending = true;
+    }
     const s = settings.value;
     if (fresh) {
       this.#clearOnStart = { cookies: s.browser.cookies.clearOnExit, siteData: s.privacy.clearSiteDataOnExit };
@@ -307,11 +325,17 @@ class Browser {
     this.#started = true;
     // Everything the browser-gated settings rows promise is implemented by this module and the engine host.
     this.#offs.push(registerFeature('browser'));
-    // The built-in extensions' settings rows act only once every row passed its e2e (WAVE-B3 §12.4). Until the
-    // integration step, e2e builds whose engine host offers `blocker` (D19's build-time switch) register them here,
-    // right after the browser; production builds do not (their engine host runs no blocker yet).
-    if (__GNOME_ENGINE_TEST__ && __GNOME_ENGINE_TEST_CAPABILITIES__.includes('blocker')) this.#offs.push(registerFeature('extensions'));
+    // The built-in extensions (WAVE-B3): their settings rows act through the engine host's `blocker` capability,
+    // offered since the step-3 integration (§12.4), so they register right after the browser.
+    this.#offs.push(registerFeature('extensions'));
     if (this.visible) this.#ensureActiveLive();
+  }
+
+  /** The fresh start's auto-connect decision (once): turns the switch on before the first snapshot is built. */
+  #decideAutoConnect(): void {
+    this.#autoConnectPending = false;
+    const offered = server.config?.wisp.profiles.length ?? 0;
+    if (decideAutoConnect(true, settings.value.vpn, offered)) settings.set('vpn', 'mode', 'gateway');
   }
 
   async #applyClearOnExitHistory(lib: BrowserLibrary): Promise<void> {
@@ -353,12 +377,77 @@ class Browser {
    * words gateway and network failures with it (ENGINE-PROTOCOL §6.4); nothing an engine event says changes it.
    */
   get vpnLocation(): { id: string; label: string; status: 'up' | 'down' | 'unknown' | 'gone' | 'none' } | null {
-    const { route } = chooseRoute(settings.value, { config: server.config, blocker: false, apple: false, vpnStatus: this.#vpnStatus });
+    const { route } = this.#routeChoice();
     if (route.kind !== 'profile') return null;
     if (route.id === NO_VPN_LOCATION) return { id: route.id, label: '', status: 'none' };
     const profile = server.config?.wisp.profiles.find((p) => p.id === route.id);
     if (server.config && !profile) return { id: route.id, label: route.id, status: 'gone' };
     return { id: route.id, label: profile?.label || route.id, status: this.#vpnStatus[route.id] ?? 'unknown' };
+  }
+
+  #routeChoice(): ReturnType<typeof chooseRoute> {
+    return chooseRoute(settings.value, { config: server.config, blocker: false, apple: false, vpnStatus: this.#vpnStatus, autoPinned: this.#autoPinned });
+  }
+
+  /**
+   * Keeps the Automatic location pinned for this app page (D17) and says when it moved: called with each snapshot
+   * (never from a getter). A chosen location or the VPN off clears the pin.
+   */
+  #updatePin(choice: ReturnType<typeof chooseRoute>): void {
+    const s = settings.value.vpn;
+    if (s.mode !== 'gateway' || s.preferredLocation !== null) {
+      if (this.#autoPinned !== null) this.#autoPinned = null;
+      return;
+    }
+    const picked = choice.autoPicked;
+    if (picked === null || picked === this.#autoPinned) return;
+    const before = this.#autoPinned;
+    this.#autoPinned = picked;
+    if (before !== null && this.#vpnStatus[before] === 'down') {
+      const label = (id: string): string => server.config?.wisp.profiles.find((p) => p.id === id)?.label || id;
+      toast.warning('VPN location changed', { description: `VPN location changed: ${label(before)} is down. Now using ${label(picked)}.`, id: 'vpn-auto-moved' });
+    }
+  }
+
+  /** The ticket route for an engine route (D23); null when there is nothing to mint for (no VPN location at all). */
+  #ticketRouteOf(route: WispRoute): TicketRoute | null {
+    if (route.kind !== 'profile') return 'default';
+    return route.id === NO_VPN_LOCATION ? null : { profile: route.id };
+  }
+
+  /** A mint for the route the app chose now (D23); remembers the route of every ticket handed over. */
+  async #mint(interactive: boolean, route: TicketRoute | null = this.#ticketRouteOf(this.#routeChoice().route)): Promise<MintOutcome> {
+    if (!this.#minter) return { ok: false, reason: 'error', message: 'The browser engine is not running.' };
+    if (route === null) return { ok: false, reason: 'error', message: 'No VPN location to route through.' };
+    const out = await this.#minter.request(interactive, route);
+    if (out.ok) this.#ticketRoute = out.route;
+    return out;
+  }
+
+  /** Tabs that may still use the previous route until they are reloaded (the VPN page's persistent line, §8.1). */
+  get previousRouteTabs(): number {
+    return this.#previousRouteTabs.size;
+  }
+
+  #pageLoaded(id: number): void {
+    if (!this.#previousRouteTabs.has(id)) return;
+    const next = new Set(this.#previousRouteTabs);
+    next.delete(id);
+    this.#previousRouteTabs = next;
+  }
+
+  /**
+   * The route changed (D23): a ticket for the new route goes to the engine host before the snapshot that switches
+   * it; the tabs live now are counted as "on the previous route" until they load a page.
+   */
+  async #switchRoute(route: TicketRoute): Promise<void> {
+    this.#previousRouteTabs = new Set(this.model.tabs.filter((t) => t.live && t.url).map((t) => t.id));
+    const out = await this.#mint(false, route);
+    if (out.ok) {
+      this.ticketNotice = null;
+      await this.#send('ticket', out.ticket).catch((err: unknown) => this.#logError('ticket', err));
+    } else if (out.reason === 'credentials') this.#needCredentials(out.kind, out.message);
+    this.#flushSnapshot(true);
   }
 
   /** A connected, initialized engine host (it may be slow to answer: `unresponsive` still takes commands). */
@@ -388,6 +477,8 @@ class Browser {
       this.engineDetail = 'The server did not name its proxy origin, so the browser engine cannot start.';
       return null;
     }
+    // A fresh start's auto-connect decision that waited for /api/config: made before the engine host exists.
+    if (this.#autoConnectPending) this.#decideAutoConnect();
     this.#interactiveStart = interactive;
     this.#minter = new TicketMinter({ mint: (o) => requestWispTicket(o), ttlMs: () => (server.config?.wisp.ticket_ttl_s ?? 3600) * 1000 });
     const client = new EngineClient({
@@ -431,7 +522,7 @@ class Browser {
   }
 
   async #buildInit(): Promise<InitPayload> {
-    const outcome = await this.#minter!.request(this.#interactiveStart);
+    const outcome = await this.#mint(this.#interactiveStart);
     this.#interactiveStart = false;
     if (!outcome.ok && outcome.reason === 'credentials') this.#needCredentials(outcome.kind, outcome.message);
     if (outcome.ok) this.ticketNotice = null;
@@ -448,11 +539,13 @@ class Browser {
   #snapshot(): InitPayload['settings'] {
     const s = settings.value;
     const listing = this.filterListing.listing;
+    this.#updatePin(this.#routeChoice());
     return buildEngineSettings(s, {
       config: server.config,
       blocker: this.hasCapability('blocker'),
       apple: isApplePlatform(),
       vpnStatus: this.#vpnStatus,
+      autoPinned: this.#autoPinned,
       lists: listing ? filterListRefs(listing, s) : [],
       scope: this.exposure,
     });
@@ -473,6 +566,10 @@ class Browser {
     }
     this.#lastSnapshot = text;
     this.#client.send('settings', { settings: snap }).catch((err: unknown) => this.#logError('settings', err));
+    // Sent at once (a load command follows); a route change gets its ticket right after (the engine host re-mints
+    // through needTicket if it connects before it arrives).
+    const route = this.#ticketRouteOf(snap.route);
+    if (route && this.#ticketRoute && !sameRoute(route, this.#ticketRoute)) void this.#switchRoute(route);
   }
 
   /** A site the engine host loads or is about to load (D5); GNOME's own loads flush the snapshot before their command. */
@@ -491,9 +588,15 @@ class Browser {
       const snap = this.#snapshot();
       const text = JSON.stringify(snap);
       if (text === this.#lastSnapshot) return;
-      this.#lastSnapshot = text;
-      const choice = chooseRoute(settings.value, { config: server.config, blocker: false, apple: false, vpnStatus: this.#vpnStatus });
+      const choice = this.#routeChoice();
       if (choice.vpnFellBack) toast.warning('VPN location unavailable', { description: 'Pages load through GNOME’s own connection until the location is back.', id: 'vpn-fallback' });
+      // A route change: the new route's ticket first, then the snapshot that switches it (D23).
+      const route = this.#ticketRouteOf(snap.route);
+      if (route && this.#ticketRoute && !sameRoute(route, this.#ticketRoute)) {
+        void this.#switchRoute(route);
+        return;
+      }
+      this.#lastSnapshot = text;
       this.#client.send('settings', { settings: snap }).catch((err: unknown) => this.#logError('settings', err));
     }, SNAPSHOT_DEBOUNCE_MS);
   }
@@ -1054,6 +1157,20 @@ class Browser {
     }
   }
 
+  /**
+   * This browser's exit check (capability `vpnVerify`, command `vpn.verify`; WAVE-C §8.1): the check service's answer
+   * through the current route, as the engine host reports it (not proof). null while the capability is missing, the
+   * engine host is not ready, or the check failed.
+   */
+  async verifyExit(url: string): Promise<VpnVerifyResult | null> {
+    if (!this.hasCapability('vpnVerify')) return null;
+    try {
+      return await this.#send('vpn.verify', { url });
+    } catch {
+      return null;
+    }
+  }
+
   focusOmnibox(): void {
     this.#show();
     this.focusOmniboxTick++;
@@ -1080,7 +1197,7 @@ class Browser {
   /** A mint the user started (may prompt for the access code); sends the ticket on success. */
   async #userMint(): Promise<void> {
     if (!this.#minter) return;
-    const out = await this.#minter.request(true);
+    const out = await this.#mint(true);
     if (out.ok) {
       this.ticketNotice = null;
       await this.#send('ticket', out.ticket).catch((err: unknown) => this.#logError('ticket', err));
@@ -1134,6 +1251,7 @@ class Browser {
         return;
       }
       case 'tab.committed':
+        this.#pageLoaded(m.p.tabId);
         this.#onCommitted(m.p);
         return;
       case 'tab.loaded': {
@@ -1415,7 +1533,7 @@ class Browser {
     // repeated needTicket would only use up the ticket budget (10 per minute here, 30 on the server) that the user's
     // own mint needs. Retry once a minute, or at once when the session changes (sign-in, access code).
     if (!force && this.ticketNotice && Date.now() - this.#credentialsAt < 60_000) return;
-    const out = await this.#minter.request(false);
+    const out = await this.#mint(false);
     if (out.ok) {
       this.ticketNotice = null;
       await this.#send('ticket', out.ticket).catch((err: unknown) => this.#logError('ticket', err));

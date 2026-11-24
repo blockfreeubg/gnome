@@ -1,15 +1,17 @@
 # gnome-server
 
 The GNOME backend: one Rust binary (Axum/Tokio/Hyper, SQLite via rusqlite) that serves the built SPA and the engine
-host on two origins, the `/api/*` REST API (sessions, accounts, sync, Wisp tickets, VPN locations, content-blocking
-filter lists), the `/wisp/`
+host on two origins, the `/api/*` REST API (sessions, accounts, sync, Wisp tickets, VPN locations and exit checks,
+content-blocking filter lists, the game catalog), the game wrapper `/play-frame/<slug>` and the open-source games
+under `/oss/<slug>/` on the proxy origin, the `/wisp/`
 gateway to HolyWisp (zero-copy `splice(2)` relay), a separate admin listener, background jobs and the operator CLI.
 Contracts live in `docs/API.md` (HTTP) and `docs/ARCHITECTURE.md` §4 (process model, configuration, security, Wisp
 gateway, data model, origins) and §7 (VPN gateway profiles).
 
 Pure-Rust dependencies only (no OpenSSL; SQLite is compiled in with FTS5), sized for a Raspberry Pi 4.
 
-Not in this build yet: the game catalog (it plugs in as a module, see [Extension points](#extension-points)).
+Since Wave C the games module (`src/games/`, the `gnome-catalog` crate wired in) and the VPN exit check
+(`src/vpn/exit.rs`) are part of every build.
 
 ## Build, run, test
 
@@ -47,6 +49,9 @@ the app learns it from `GET /api/config`.
 | `gnome-server filters refresh [<id>...]` | Check every filter list (or the named ones) upstream now, store what changed, print one line per list; exit `1` if any failed. Works while a server runs on the same data dir |
 | `gnome-server filters status` | Print the stored filter lists (size, compressed sizes, version, last error) |
 | `gnome-server config check` | Validate the configuration and print every setting with its source (`default`/`file`/`env`); never creates files |
+| `gnome-server catalog import [--source S]… [--limit N] [--replay <index.json>]` | Import game feeds now (default: every enabled source); one JSON report per run; exit `1` when a run failed or was busy, `2` for an unknown or disabled source or a bad replay index. `--replay` answers the importers from captured responses and never contacts a host (development and tests). Needs the server's binds (the `oss` source needs a proxy origin) |
+| `gnome-server catalog stats` | Print the catalog statistics (`CatalogStats`) as JSON |
+| `gnome-server catalog fetch-oss [--slug S]…` | Download the pinned builds of the enabled open-source games (default: every entry whose build is missing or at another commit) from `codeload.github.com`; one JSON line per entry; exit `1` if one failed |
 | `gnome-server version` | Version and target |
 
 Exit codes: `0` success, `1` runtime failure, `2` configuration or usage error.
@@ -83,6 +88,19 @@ implementation.
 | `GNOME_WISP_TICKET_TTL_S` | `3600` | upper bound of a Wisp ticket's lifetime (60–604800; tickets also end with their session; checked only at the upgrade, so open connections outlive it) |
 | `GNOME_MAX_WS_PER_IP` / `GNOME_MAX_WS_PER_SESSION` | `32` / `16` | concurrent Wisp connections per client IP (IPv6 /64) / per session |
 | `GNOME_VPN_PROFILES` | – | path of the VPN gateway profiles TOML (`services/vpn/profiles.example.toml`) |
+| `GNOME_VPN_CHECK_URL` / `GNOME_VPN_CHECK_URL_V6` | empty / empty | the operator's exit check service (HTTPS JSON with `ip`, `country`, `city`) and its IPv6-only name; **empty = no exit checks** (`verify_url: null`) |
+| `GNOME_VPN_CHECK_INTERVAL_MIN` | `15` | minutes between server-side checks of each location (± 20 %; 0–1440; `0` = on request only) |
+| `GNOME_VPN_EGRESS_SHARED_OK` | `false` | the operator states the egress's terms allow every person who can use this instance (silences the D16 warning) |
+| `GNOME_CATALOG_SOURCES` / `GNOME_CATALOG_REFRESH_HOURS` | `gamepix,oss` / `24` | enabled game sources (`none` = no catalog); hours between imports of each source (`0` = on request; first tick 30 s after start) |
+| `GNOME_GAMEPIX_SID` | `1` | GamePix publisher SID (`1` = the public default) |
+| `GNOME_GD_PUBLISHER_ID` / `GNOME_PLAYGAMA_CLID` / `GNOME_FAMOBI_AFFILIATE_ID` / `GNOME_GAMEMONETIZE_ENABLED` | – / – / – / `false` | each network's ID (or opt-in); required to enable that source |
+| `GNOME_ITCHIO_FEEDS` / `GNOME_ITCHIO_MAX_PAGES` / `GNOME_JS13K_FIRST_YEAR` | `games/free/platform-web` / `3` / `2012` | link-out sources |
+| `GNOME_OSS_MANIFEST` / `GNOME_OSS_GAMES_DIR` / `GNOME_OSS_REQUIRE_BUILDS` | built-in / `$GNOME_DATA_DIR/oss-games` / `true` | the open-source games manifest, where builds live, list only built games |
+| `GNOME_OSS_FETCH` / `GNOME_OSS_MAX_MB` | `auto` / `512` | fetch missing OSS builds in the background (`manual` = CLI only); disk cap for all builds (16–65536 MiB) |
+| `GNOME_CATALOG_BLOCKLIST` / `GNOME_CATALOG_BLOCKLIST_FILE` / `GNOME_CATALOG_DEDUP_ORDER` / `GNOME_CATALOG_USER_AGENT` | – / – / built-in order / `GNOME-catalog/<version>` | trademark terms; preferred listing across sources; feed User-Agent |
+| `GNOME_GAMES_EMBED_HOSTS` | – | developer hosts approved for game embeds (exact DNS names; catalog data never adds one) |
+| `GNOME_ADS_TXT` | – | absolute path of the file served as `/ads.txt` (≤ 64 KiB) |
+| `GNOME_THUMB_PROXY` / `GNOME_THUMB_CACHE_MB` | `true` / `256` | thumbnails through `/api/thumb/:id`; disk cap (`0` = validated pass-through, nothing stored) |
 | `GNOME_FILTERS_REFRESH_HOURS` | `24` | re-check interval of filter lists without `! Expires` (lists with one follow it); clamped to 4 h–7 d; `0` = only `filters refresh` / admin refresh |
 | `GNOME_FILTER_LISTS_FILE` | – | TOML overriding, disabling or adding filter lists (see [Filter lists](#filter-lists)) |
 | `GNOME_RATE_LIMIT_SCALE` | `1.0` | multiplies every limit; `0` disables |
@@ -92,12 +110,9 @@ implementation.
 | `GNOME_CSP` | `on` | shell CSP: `on` · `report-only` · `off` |
 | `GNOME_HSTS` | `false` | HSTS on HTTPS responses |
 
-Validated but **no effect in this build** (their modules are not included; `config check` labels them, setting one
-logs a warning): `GNOME_CATALOG_REFRESH_HOURS`, `GNOME_CATALOG_SOURCES` (default `gamepix,oss`),
-`GNOME_THUMB_PROXY`, `GNOME_THUMB_CACHE_MB`. The catalog crate's own variables (`GNOME_GAMEPIX_SID`, the publisher /
-affiliate IDs, `GNOME_ITCHIO_*`, `GNOME_JS13K_FIRST_YEAR`, `GNOME_OSS_*`, `GNOME_CATALOG_BLOCKLIST*`,
-`GNOME_CATALOG_DEDUP_ORDER`, `GNOME_CATALOG_USER_AGENT`; ARCHITECTURE §4.2, `crates/catalog/README.md`) are not in
-`VARS` yet: the catalog module adds them when it lands (Wave C), so a `GNOME_CONFIG` file refuses them until then.
+65 variables in all (plus `GNOME_CONFIG`). `config check` and start-up warn when VPN profiles are offered in `open`
+mode, in `accounts` mode with open registration, or (a reminder) in `code` mode, unless `GNOME_VPN_EGRESS_SHARED_OK`
+is `true` (WAVE-C D16), and when the `oss` source is enabled without a proxy origin (it is then disabled).
 
 `config check` also prints the origin setup (two-origin mode with the app and proxy origins and where each came from,
 or a warning in single-origin mode), the Wisp upstream, the VPN profiles and the filter-list registry. It warns when
@@ -113,20 +128,26 @@ Adding a setting: a `VarSpec` in `VARS` (mark it `inactive(..)` until a module r
 
 | Path | Responsibility |
 | --- | --- |
-| `main.rs`, `cli.rs` | Entry point; clap CLI (`serve`, `migrate`, `user`, `filters`, `config check`, `version`); runtime setup |
+| `main.rs`, `cli.rs` | Entry point; clap CLI (`serve`, `migrate`, `user`, `filters`, `config check`, `catalog`, `version`); runtime setup |
 | `config.rs` | `Config` from env + TOML, validation, provenance, redaction |
 | `state.rs` | `AppState` (cheap `Arc` handle): config, `Db`, secret key, password hasher, rate limiter, login backoff, metrics, static index, security policies, jobs, shutdown token + task tracker, module list, module state |
-| `module.rs` | `Module` trait, `ModuleSetup`, `Ext<T>`, `builtin_modules` (`core`, `accounts`, `wisp`, `vpn`, `filters`) |
+| `module.rs` | `Module` trait (with the start-up hook `prepare`, awaited before jobs start and listeners accept), `ModuleSetup`, `Ext<T>`, `builtin_modules` (`core`, `accounts`, `wisp`, `vpn`, `filters`, `games`) |
 | `origins.rs` | `Role` (app / proxy / single-origin), `ProxySetup` (proxy origin, app origins, validation, warnings) |
 | `server.rs` | Listeners (public, proxy, admin; hyper HTTP/1.1, upgrades enabled, header-read timeout), accept loops, graceful shutdown |
 | `router.rs` | Per-role routers, `Host` dispatch on the public listener, admin router; middleware order; body limits; request timeout; panic → 500 JSON |
 | `gateway/mod.rs` | The `wisp` module: `POST /api/wisp/ticket`, `/wisp/` + `/wisp/p/{id}/` upgrade checks, metrics, diagnostics |
-| `gateway/ticket.rs` | Wisp tickets `w1.<exp_s>.<session_ref>.<mac>` (own key derivation, strict parsing, constant-time MAC check) |
+| `gateway/ticket.rs` | Route-bound Wisp tickets `w2.<exp_s>.<iat_s>.<route>.<session_ref>.<mac>` (`route` = `d` or `p<base64url id>`; own key derivation, strict parsing, constant-time MAC check; `w1` refused). The gateway refuses a ticket on another route, one minted before the process started, and a default-route ticket older than the session's latest profile mint (`401 wisp_ticket_wrong_route` / `_stale` / `_superseded`) |
 | `gateway/caps.rs` | Per-IP and per-session connection caps (RAII `CapGuard`) |
 | `gateway/upstream.rs` | Upstream addresses (internal only), the reconstructed upgrade request, response-head parsing, the health probe |
 | `gateway/relay.rs` | Byte relay: `splice(2)` through nonblocking pipes on Linux (via `rustix`), `copy_bidirectional` otherwise |
 | `gateway/health.rs` | Upstream health state and the `wisp.health` job (every 60 s) |
-| `vpn/mod.rs`, `vpn/profiles.rs` | The `vpn` module (`/api/vpn/locations`, `wisp.profiles` in `/api/config`); `GNOME_VPN_PROFILES` parsing |
+| `vpn/mod.rs`, `vpn/profiles.rs` | The `vpn` module (`/api/vpn/locations` with `exit` behind the access gate, `POST /api/vpn/locations/{id}/check`, `wisp.profiles` in `/api/config`, the `vpn.exit-check` job); `GNOME_VPN_PROFILES` parsing |
+| `vpn/exit.rs`, `vpn/wisp_client.rs` | `ExitChecker`: each location's exit checked through its own HolyWisp (a minimal Wisp v1 client, TLS by rustls with webpki roots, one HTTP/1.1 GET, `User-Agent: exit-check/1`, 15 s deadline, 16 KiB cap), results, the 60 s reuse, diagnostics and metrics |
+| `games/mod.rs` | The `games` module: the `gnome-catalog` crate wired in (`prepare`, config hand-over), routes, jobs, CLI, admin, metrics, diagnostics |
+| `games/routes.rs`, `games/thumbs.rs` | `/api/games*`, `POST /api/games/{slug}/play` (HMAC dedup), `/api/thumb/{id}` and its disk LRU cache (type + magic-byte checks, ≤ 2 MiB) |
+| `games/frames.rs` | `FramePolicy` (which embed hosts may be framed, per game; the `pending` report) and the wrapper document `/play-frame/{slug}` with its per-game CSP |
+| `games/oss.rs` | Open-source builds: the fetch of a pinned commit (tarball via `gnome-net`, safe extraction, atomic replace, file index) and `/oss/{slug}/**` on the proxy role (entry only to frame loads, per-file policies) |
+| `games/jobs.rs`, `games/cli.rs`, `games/replay.rs`, `games/admin.rs`, `games/fetcher.rs`, `games/ads_txt.rs` | `catalog.import` / `catalog.rankings` / `catalog.policy` / `catalog.oss-fetch`; `gnome-server catalog …`; `--replay` captures; `/admin/catalog/*` and `/admin/games/*`; the feed fetcher over `gnome-net`; `/ads.txt` |
 | `filters/mod.rs` | The `filters` module: `FilterService` (registry, in-memory index, startup check), `filters.refresh` job, `POST /admin/filters/refresh`, diagnostics, metrics |
 | `filters/registry.rs` | Built-in list registry (research §5.2 defaults) and `GNOME_FILTER_LISTS_FILE` overrides (also `file` sources and their path checks) |
 | `filters/refresh.rs` | Upstream checks: conditional GET via `gnome-net`, mirrors, `!#include` flattening, Ghostery resources revision check, SHA-256 change detection, `! Expires` schedule, backoff; file lists read without blocking (`read_list_file`) |

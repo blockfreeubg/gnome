@@ -29,7 +29,7 @@ async function rowA6(ctx, browser) {
     const ready = await waitState(page, (x) => x.engineState === 'ready' && x.tabs.some((t) => t.live), 45_000, 'the browser').catch(() => null);
     if (!ready) return { result: 'fail', notes: `the browser did not start: ${JSON.stringify(await state(page).catch(() => null))?.slice(0, 500)}` };
     const caps = await page.evaluate(() => window.__gnomeBrowser.hasCapability('blocker')).catch(() => false);
-    if (!caps) return { result: 'fail', notes: 'the engine host does not offer blocker (build without GNOME_ENGINE_TEST_CAPABILITIES=blocker?)' };
+    if (!caps) return { result: 'fail', notes: 'the engine host does not offer blocker' };
     const KEYS = 60;
     const key = (n) => `*.a6-${n}.localhost`;
     await page.evaluate((keys) => window.__gnomeSettings.set('extensions', 'allowlist', keys), Array.from({ length: KEYS }, (_, n) => key(n)));

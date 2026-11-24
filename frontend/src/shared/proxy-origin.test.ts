@@ -269,10 +269,19 @@ describe('service worker messages', () => {
       docs: [doc],
       navs: ['https://p.example/uv/service/y'],
       drop: [],
+      inits: [],
       reset: true,
     });
     const base = { type: 'gnome-blocker-context', docs: [], navs: [], drop: [], reset: false };
-    expect(parseHostToSw(base)).toEqual(base);
+    expect(parseHostToSw(base)).toEqual({ ...base, inits: [] });
+    const init: [string, string] = ['https://p.example/uv/service/y', ''];
+    const opener: [string, string] = ['https://p.example/uv/service/z', 'https://site-b.example/page'];
+    expect(parseHostToSw({ ...base, inits: [init, opener] })).toEqual({ ...base, inits: [init, opener] });
+    expect(parseHostToSw({ ...base, inits: Array.from({ length: 65 }, () => init) })).toBeNull();
+    expect(parseHostToSw({ ...base, inits: [['https://p.example/uv/service/y', 1]] })).toBeNull();
+    expect(parseHostToSw({ ...base, inits: [['', '']] })).toBeNull();
+    expect(parseHostToSw({ ...base, inits: [['https://p.example/uv/service/y', 'x'.repeat(8193)]] })).toBeNull();
+    expect(parseHostToSw({ ...base, inits: 'x' })).toBeNull();
     expect(parseHostToSw({ ...base, docs: Array.from({ length: 513 }, () => doc) })).toBeNull();
     expect(parseHostToSw({ ...base, navs: Array.from({ length: 65 }, () => 'u') })).toBeNull();
     expect(parseHostToSw({ ...base, drop: Array.from({ length: 65 }, () => 'u') })).toBeNull();

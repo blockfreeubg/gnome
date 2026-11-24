@@ -346,6 +346,11 @@ async function behaviour(browser) {
       skipped.push('custom Wisp servers editor (hidden until the built-in browser registers)');
       return;
     }
+    // Without GNOME_ALLOW_CUSTOM_WISP the server forbids custom relays: the row explains it and shows no editor.
+    if (/does not allow custom Wisp servers/.test(await wisp.innerText())) {
+      check(!(await wisp.getByRole('textbox').count()), 'wisp servers: not allowed by this server, no editor shown');
+      return;
+    }
     await wisp.getByRole('textbox').fill('https://not-a-websocket.example/');
     await wisp.getByRole('button', { name: 'Add server' }).click();
     check(await wisp.getByText('Use a ws:// or wss:// address.').isVisible(), 'wisp server editor rejects https://');
@@ -373,10 +378,8 @@ async function behaviour(browser) {
       await open(page, '/settings/vpn');
       return page.locator('[data-row^="vpn."]').count();
     })();
-    if (vpnRows === 0) {
-      check(!listed.some((t) => /^VPN/.test(t.trim())), `sections list leaves out VPN while it has no settings (${listed.length} sections)`);
-      check(await page.getByText('VPN settings are not available yet').isVisible(), '/settings/vpn explains why it is empty');
-    } else skipped.push('hidden VPN section (the VPN feature is present)');
+    // Since Wave C the VPN registers in every build (D18, D20): its rows are always there, the mode row usable.
+    check(vpnRows >= 5 && listed.some((t) => /^VPN/.test(t.trim())), `VPN section and its rows are present in every build (${vpnRows} rows)`);
     await open(page, '/settings/browser');
     const startup = await row(page, 'startup').count();
     const engine = await row(page, 'searchEngine').count();

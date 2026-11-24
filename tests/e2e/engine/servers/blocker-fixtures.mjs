@@ -428,7 +428,8 @@ export async function startBlockerFixtures({ port, root = process.env.E2E_BLOCKE
       s.on('upgrade', (req, socket) => {
         const host = hostnameOf(req);
         const label = labelOf(host);
-        const pathname = (req.url ?? '').split('?')[0];
+        // An absolute-form target (epoxy's handshake sends `GET ws://host:port/ws`, RFC 9112 §3.2.2) names the same path.
+        const pathname = new URL(req.url ?? '/', `http://${host || 'unknown'}:${port}`).pathname;
         requests.push({ at: Date.now(), host, label, method: 'UPGRADE', path: pathname, search: '', url: `ws://${host}:${port}${req.url}`, headers: headersObject(req.rawHeaders) });
         if (!label || pathname !== '/ws') {
           socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');

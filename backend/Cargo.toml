@@ -41,6 +41,7 @@ serde_path_to_error.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+tar.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 toml.workspace = true
@@ -48,15 +49,17 @@ tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Wave C: the server-side VPN exit check speaks Wisp over a WebSocket and TLS through it (backend/src/vpn/exit.rs).
+futures-util.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
+webpki-roots.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
 
 [dev-dependencies]
-futures-util.workspace = true
 tempfile.workspace = true
-tokio-rustls.workspace = true
-tokio-tungstenite.workspace = true
-webpki-roots.workspace = true
 # Paused-clock tests (timeouts) run instantly.
 tokio = { workspace = true, features = ["test-util"] }

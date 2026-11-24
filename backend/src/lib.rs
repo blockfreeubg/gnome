@@ -16,6 +16,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod filters;
+pub mod games;
 pub mod gateway;
 pub mod jobs;
 pub mod metrics;

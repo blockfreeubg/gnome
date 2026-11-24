@@ -150,7 +150,9 @@ async fn api_guard(State(state): State<AppState>, mut req: Request, next: Next) 
         return next.run(req).await;
     }
     let ip = req.extensions().get::<ClientInfo>().map_or(ClientInfo::unknown().ip, |c| c.ip);
-    if let Err(e) = enforce(&state, RateClass::Api, ip, None) {
+    // Thumbnails have their own class: a long scroll of the Games page loads hundreds (WAVE-C D7).
+    let class = if req.uri().path().starts_with("/api/thumb/") { RateClass::Thumb } else { RateClass::Api };
+    if let Err(e) = enforce(&state, class, ip, None) {
         return e.into_response();
     }
     let sink = CookieSink::default();

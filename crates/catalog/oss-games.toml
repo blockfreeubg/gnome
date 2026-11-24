@@ -8,7 +8,10 @@
 # link syntax removed). Categories are chosen by hand (research §6.1: "js13k / Y8 / OSS: chosen by hand").
 #
 # Entries with `enabled = false` cannot be self-hosted from a plain checkout (build step, server component,
-# analytics, or not a finished game); `notes` says why. The importer only lists enabled entries whose build exists
+# analytics, third-party loads, a failed review, or not a finished game); `notes` says why. Every enabled entry
+# carries `reviewed`: the review of its pinned commit (docs/WAVE-C.md D5, §4.8 item 5); without one an entry is never
+# fetched or served. `isolated = true`: the review found no storage use, so the game runs in an opaque-origin sandbox.
+# The importer only lists enabled entries whose build exists
 # under $GNOME_OSS_GAMES_DIR/<slug>/<entry> (see README), and serves them from the proxy origin at
 # /oss/<slug>/<entry>. Show the licence, copyright line and repository link next to the game; ship the LICENSE
 # file with the build; for (A)GPL games also publish any modified source.
@@ -30,6 +33,7 @@ tags = ["numbers", "sliding"]
 description = "A small clone of 1024, based on Saming's 2048 (also a clone). 2048 was indirectly inspired by Threes."
 homepage = "https://play2048.co"
 enabled = true
+reviewed = "2026-11-23: read the pinned commit (WAVE-C D5): no localStorage/sessionStorage clearing, indexedDB.deleteDatabase, caches.delete or service-worker register/unregister; no innerHTML/document.write/eval fed from location, the hash, document.referrer or postMessage; no external loads of code, styles or fonts; storage: localStorage (best score and game state)"
 
 [[games]]
 slug = "hexgl"
@@ -46,8 +50,8 @@ categories = ["racing"]
 tags = ["webgl", "futuristic"]
 description = "Source code of HexGL, the futuristic HTML5 racing game by Thibaut Despoulain"
 homepage = "http://hexgl.bkcore.com"
-enabled = true
-notes = "index.html references its favicon on hexgl.bkcore.com"
+enabled = false
+notes = "review 2026-11-23 failed: LICENSE is MIT but the source files still carry CC BY-NC 3.0 headers (licence to be confirmed with the author), libs/leap-0.4.1.min.js opens a WebSocket to a local Leap Motion service, and index.html loads its favicon from hexgl.bkcore.com"
 
 [[games]]
 slug = "particle-clicker"
@@ -65,8 +69,8 @@ categories = ["idle", "educational"]
 tags = ["physics", "science", "incremental"]
 description = "An addictive incremental game that teaches players the history of high energy particle physics."
 homepage = "https://particle-clicker.web.cern.ch"
-enabled = true
-notes = "loads jQuery, AngularJS and Bootstrap from public CDNs; analytics is disabled (empty Helpers.analytics id in js/helpers.js)"
+enabled = false
+notes = "loads jQuery, AngularJS and Bootstrap from public CDNs; the proxy origin allows no third-party loads (docs/WAVE-C.md D5)"
 
 [[games]]
 slug = "javascript-racer"
@@ -85,6 +89,7 @@ description = "An Outrun-style pseudo-3d racing game in HTML5 and Javascript"
 homepage = "https://jakesgordon.com/writing/javascript-racer/"
 enabled = true
 notes = "index.html is a menu of the four tutorial stages; v4.final.html is the complete game"
+reviewed = "2026-11-23: read the pinned commit (WAVE-C D5): no localStorage/sessionStorage clearing, indexedDB.deleteDatabase, caches.delete or service-worker register/unregister; no innerHTML/document.write/eval fed from location, the hash, document.referrer or postMessage; no external loads of code, styles or fonts; storage: localStorage (fastest lap)"
 
 [[games]]
 slug = "javascript-breakout"
@@ -103,6 +108,7 @@ description = "Another HTML5 experiment to implement BREAKOUT in a <canvas>"
 homepage = "https://jakesgordon.com/writing/javascript-breakout/"
 enabled = true
 notes = "LICENSE is the MIT text (GitHub reports NOASSERTION because of the copyright line format)"
+reviewed = "2026-11-23: read the pinned commit (WAVE-C D5): no localStorage/sessionStorage clearing, indexedDB.deleteDatabase, caches.delete or service-worker register/unregister; no innerHTML/document.write/eval fed from location, the hash, document.referrer or postMessage; no external loads of code, styles or fonts (soundmanager2 names macromedia.com only for its unused Flash fallback); storage: localStorage (level and score)"
 
 [[games]]
 slug = "bullethell"
@@ -121,6 +127,8 @@ description = "A bullet hell game in HTML5 and JS, using the p5.js library."
 instructions = "Arrow keys to move. Z to fire. X to slow down time."
 homepage = "https://selenebun.github.io/bullethell/"
 enabled = true
+reviewed = "2026-11-23: read the pinned commit (WAVE-C D5): no localStorage/sessionStorage clearing, indexedDB.deleteDatabase, caches.delete or service-worker register/unregister; no innerHTML/document.write/eval fed from location, the hash, document.referrer or postMessage; no external loads of code, styles or fonts; storage: none (runs isolated)"
+isolated = true
 
 [[games]]
 slug = "javascript-chess"
@@ -137,8 +145,8 @@ categories = ["strategy"]
 tags = ["chess", "board"]
 description = "This program is a JavaScript implementation of the board game Chess, with a computer player opponent. All move types are supported, including en passant, castling and promotion."
 homepage = "http://www.iki.fi/kbjorklu/chess/"
-enabled = true
-notes = "loads jQuery / jQuery UI from code.jquery.com and cdnjs.cloudflare.com"
+enabled = false
+notes = "loads jQuery and jQuery UI from code.jquery.com and cdnjs.cloudflare.com; the proxy origin allows no third-party loads (docs/WAVE-C.md D5)"
 
 [[games]]
 slug = "a-blast"
@@ -157,8 +165,8 @@ tags = ["webxr", "vr", "a-frame"]
 description = "A WebVR FPS mini-game demo using A-Frame by Mozilla VR."
 instructions = "You can also play in desktop using the spacebar and the mouse, and on your mobile phone too (with or without Cardboard)."
 homepage = "https://aframe.io/a-blast/"
-enabled = true
-notes = "build/build.js is committed; also loads aframe.min.js from aframe.io"
+enabled = false
+notes = "loads aframe.min.js from aframe.io; the proxy origin allows no third-party loads (docs/WAVE-C.md D5)"
 
 [[games]]
 slug = "a-dark-room"
@@ -175,8 +183,8 @@ categories = ["adventure", "idle"]
 tags = ["text-adventure", "minimalist"]
 description = "a minimalist text adventure game for your browser"
 homepage = "http://adarkroom.doublespeakgames.com"
-enabled = true
-notes = "tries jQuery from ajax.googleapis.com first, with the bundled lib/jquery.min.js as fallback"
+enabled = false
+notes = "review 2026-11-23 failed: script/engine.js calls localStorage.clear(), which would clear the proxy origin's storage (docs/WAVE-C.md D5); it also tries jQuery from ajax.googleapis.com first"
 
 [[games]]
 slug = "hextris"
@@ -193,8 +201,8 @@ categories = ["puzzle", "arcade"]
 tags = ["hexagon", "blocks"]
 description = "An addictive puzzle game inspired by Tetris."
 homepage = "https://hextris.io"
-enabled = true
-notes = "default branch gh-pages; copyleft: publish any modified source"
+enabled = false
+notes = "review 2026-11-23 failed: index.html loads Google AdSense (pagead2.googlesyndication.com), Google Fonts and http://hextris.io/a.js; the proxy origin allows no third-party loads (docs/WAVE-C.md D5)"
 
 [[games]]
 slug = "clumsy-bird"
@@ -215,6 +223,7 @@ enabled = true
 notes = "build/clumsy-min.js is committed; Flappy-Bird-style: review trade dress (research §8.2); copyleft"
 
 # --- Verified licences, but not self-hostable from a plain checkout --------------------------------------------
+reviewed = "2026-11-23: read the pinned commit (WAVE-C D5): no localStorage/sessionStorage clearing, indexedDB.deleteDatabase, caches.delete or service-worker register/unregister; no innerHTML/document.write/eval fed from location, the hash, document.referrer or postMessage; no external loads of code, styles or fonts (melonJS reads the hash only for its debug flags); storage: localStorage (high score)"
 
 [[games]]
 slug = "sandspiel"

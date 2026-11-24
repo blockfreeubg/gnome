@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>E2E embed</title>
+<style>body { margin: 0; background: #123; color: #fff; font: 14px system-ui, sans-serif; } button { margin: 8px; }</style>
+</head>
+<body>
+<!-- The fake game embed (docs/WAVE-C.md §9.1), answered by Playwright routing for every embed host the replayed
+     records use. It records what it was loaded with; the suites run their probes in this frame with frame.evaluate
+     (top navigation, popup, opener, self-navigation, alert, geolocation, camera, fullscreen). -->
+<p id="info">E2E embed</p>
+<button id="fs" type="button">Fullscreen</button>
+<script>
+  window.e2eEmbed = { referrer: document.referrer, url: location.href, loadedAt: Date.now() };
+  document.getElementById('info').textContent = 'E2E embed: ' + location.host;
+  document.getElementById('fs').addEventListener('click', function () {
+    document.documentElement.requestFullscreen().then(function () { window.e2eEmbed.fullscreen = 'ok'; }, function (e) { window.e2eEmbed.fullscreen = String(e && e.name); });
+  });
+</script>
+</body>
+</html>

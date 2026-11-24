@@ -68,6 +68,13 @@ pub trait Module: Send + Sync + 'static {
         Router::new()
     }
 
+    /// Start-up work that must be done before the first request is answered (`server::serve_all` awaits every
+    /// module's `prepare` in mount order before it starts the jobs and the accept loops). It never fails the start:
+    /// a module reports problems in `diagnostics` and degrades (WAVE-C D21).
+    fn prepare<'a>(&'a self, _state: &'a AppState) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
     /// Periodic jobs to start with the server.
     fn jobs(&self, _state: &AppState) -> Vec<Job> {
         Vec::new()
@@ -127,13 +134,25 @@ pub fn builtin_modules_with(
     setup: &mut ModuleSetup<'_>,
     gateway: crate::gateway::GatewayOptions,
 ) -> Vec<Arc<dyn Module>> {
+    builtin_modules_with_games(setup, gateway, crate::games::GamesOptions::default())
+}
+
+/// [`builtin_modules_with`] with the games module's options (tests pass fixture fetchers and a manual clock).
+pub fn builtin_modules_with_games(
+    setup: &mut ModuleSetup<'_>,
+    gateway: crate::gateway::GatewayOptions,
+    games_options: crate::games::GamesOptions,
+) -> Vec<Arc<dyn Module>> {
     let mut modules: Vec<Arc<dyn Module>> = vec![Arc::new(crate::api::CoreApi)];
     if setup.state.config.accounts {
         modules.push(Arc::new(crate::api::Accounts));
     }
     modules.push(crate::gateway::install(setup, gateway));
-    modules.push(Arc::new(crate::vpn::Vpn));
+    modules.push(crate::vpn::install(setup));
     modules.push(crate::filters::install(setup, crate::filters::FilterOptions::default()));
+    if let Some(games) = crate::games::install(setup, games_options) {
+        modules.push(games);
+    }
     modules
 }
 

@@ -123,7 +123,13 @@ function settingsFromQuery(): EngineSettings {
 
 async function mint(): Promise<Ticket> {
   T.ticketRequests += 1;
-  const r = await fetch('/api/wisp/ticket', { method: 'POST', headers: { 'X-GNOME-Request': '1' } });
+  // Route-bound tickets (WAVE-C D23): a profile route mints for that profile; every other route mints the default.
+  const route = routeFromQuery();
+  const r = await fetch('/api/wisp/ticket', {
+    method: 'POST',
+    headers: { 'X-GNOME-Request': '1', 'content-type': 'application/json' },
+    body: JSON.stringify({ route: route.kind === 'profile' ? { profile: route.id } : 'default' }),
+  });
   if (!r.ok) throw new Error(`ticket: HTTP ${r.status}`);
   const j = (await r.json()) as { ticket: string; expires_at: number; wisp_url: string };
   const ttl = Number((T.config?.wisp as { ticket_ttl_s?: number } | undefined)?.ticket_ttl_s ?? 3600) * 1000;

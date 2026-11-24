@@ -295,7 +295,7 @@ async fn import(args: &[String]) {
         r.total,
         r.items.iter().take(5).map(|g| &g.title).collect::<Vec<_>>()
     );
-    let (ms, s) = time_ms(20, || cat.sections(&conn, 24).unwrap());
+    let (ms, s) = time_ms(20, || cat.sections(&conn, 24, &Default::default()).unwrap());
     println!(
         "sections ({ms:.2} ms): featured {} trending {} popular {} new {}; featured[..5] {:?}",
         s.featured.len(),
@@ -307,7 +307,7 @@ async fn import(args: &[String]) {
     let (ms, tags) = time_ms(20, || cat.tags(&conn, "", 10, false).unwrap());
     println!("tags ({ms:.2} ms): {:?}", tags.iter().map(|t| format!("{}={}", t.tag, t.count)).collect::<Vec<_>>());
     if let Some(g) = s.popular.first() {
-        let (ms, page) = time_ms(20, || cat.game(&conn, &g.slug, 12).unwrap().unwrap());
+        let (ms, page) = time_ms(20, || cat.game(&conn, &g.slug, 12, &Default::default()).unwrap().unwrap());
         println!("detail '{}' ({ms:.2} ms): embed {} · related {}", g.slug, page.game.embed_url, page.related.len());
     }
     let (ms, n) = time_ms(3, || cat.refresh_rankings(&mut conn, TokioClock.now_ms()).unwrap());

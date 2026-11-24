@@ -18,6 +18,7 @@ import { api, isApiError, type ApiError } from '../lib/api';
 import type { BookmarkRecord, HistoryRecord } from '../lib/idb';
 import { createDefaultSettings } from './defaults';
 import { withLocalPicture } from './local-picture';
+import { withLocalVpn } from './local-vpn';
 import type { Settings } from './schema';
 import { deepEqual, loadSettings } from './validate';
 
@@ -106,11 +107,17 @@ export function syncedPart(s: Settings): SyncedSettings {
 /**
  * Validates a synced document (from the server or a merge) and re-attaches this device's `account` section. A home
  * background picture stored in another browser (`idb:` key) is replaced by this device's own backdrop: the picture
- * itself is never synced.
+ * itself is never synced. `vpn.mode` and `vpn.killSwitch` keep this device's values (device-local, docs/WAVE-C.md D12).
  */
 export function withDeviceSettings(doc: unknown, device: Settings): Settings {
   const raw = isPlainObject(doc)
-    ? { ...withLocalPicture(doc, device.appearance.homeBackground), account: device.account }
+    ? {
+        ...withLocalVpn(withLocalPicture(doc, device.appearance.homeBackground), {
+          mode: device.vpn.mode,
+          killSwitch: device.vpn.killSwitch,
+        }),
+        account: device.account,
+      }
     : { account: device.account };
   return loadSettings(raw).settings;
 }

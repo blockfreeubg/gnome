@@ -284,6 +284,50 @@ describe('syncSettingsOnce', () => {
     expect(await syncSettingsOnce(dev.deps(server.transport))).toMatchObject({ pushed: false, pulled: false });
   });
 
+  it('never adopts another device’s vpn.mode or vpn.killSwitch on a download, and pushes nothing because of them', async () => {
+    const remote = createDefaultSettings();
+    remote.vpn.mode = 'gateway';
+    remote.vpn.killSwitch = false;
+    remote.appearance.theme = 'light';
+    const server = fakeServer({ data: syncedPart(remote), updatedAt: 9000 });
+    const dev = fakeDevice();
+    const out = await syncSettingsOnce(dev.deps(server.transport));
+    expect(dev.settings.appearance.theme).toBe('light');
+    expect(dev.settings.vpn.mode).toBe('off');
+    expect(dev.settings.vpn.killSwitch).toBe(true);
+    expect(out.pushed).toBe(false);
+    expect(await syncSettingsOnce(dev.deps(server.transport))).toMatchObject({ pushed: false, pulled: false });
+  });
+
+  it('a merge takes another vpn key from the other device and keeps this browser’s mode and kill switch', async () => {
+    const server = fakeServer({ data: syncedPart(createDefaultSettings()), updatedAt: 100 });
+    const dev = fakeDevice();
+    dev.edit((s) => {
+      s.vpn.mode = 'gateway';
+      s.vpn.killSwitch = true;
+    });
+    await syncSettingsOnce(dev.deps(server.transport));
+    const other = structuredClone(server.stored!.data) as SyncedSettings;
+    other.vpn = { ...other.vpn, mode: 'off', killSwitch: false, preferredLocation: 'se-sto' };
+    server.write(other);
+    dev.edit((s) => (s.appearance.radius = 3));
+    await syncSettingsOnce(dev.deps(server.transport));
+    expect(dev.settings.vpn).toMatchObject({ mode: 'gateway', killSwitch: true, preferredLocation: 'se-sto' });
+    expect(dev.settings.appearance.radius).toBe(3);
+  });
+
+  it('a merge where only the other device’s switches differ changes nothing here and pushes nothing', async () => {
+    const server = fakeServer({ data: syncedPart(createDefaultSettings()), updatedAt: 100 });
+    const dev = fakeDevice();
+    await syncSettingsOnce(dev.deps(server.transport));
+    const other = structuredClone(server.stored!.data) as SyncedSettings;
+    other.vpn = { ...other.vpn, mode: 'gateway', killSwitch: false };
+    server.write(other);
+    const out = await syncSettingsOnce(dev.deps(server.transport));
+    expect(dev.settings.vpn).toMatchObject({ mode: 'off', killSwitch: true });
+    expect(out.pushed).toBe(false);
+  });
+
   it('gives up after repeated conflicts instead of looping', async () => {
     const server = fakeServer({ data: syncedPart(createDefaultSettings()), updatedAt: 100 });
     const dev = fakeDevice();

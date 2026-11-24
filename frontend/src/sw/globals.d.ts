@@ -5,8 +5,6 @@
 
 declare const __GNOME_BUILD__: string;
 declare const __GNOME_ENGINE_TEST__: boolean;
-/** WAVE-B3 D19 (vite.config.ts `engineTestCapabilities`): [] outside e2e builds. */
-declare const __GNOME_ENGINE_TEST_CAPABILITIES__: readonly string[];
 
 /** scramjet-controller 0.0.14 `controller.sw.js`. */
 declare const $scramjetController: {

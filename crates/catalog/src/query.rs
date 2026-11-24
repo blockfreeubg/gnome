@@ -97,10 +97,60 @@ pub struct ListQuery {
     pub mobile: bool,
     /// Also return link-out-only games (itch.io, js13kGames).
     pub include_link_out: bool,
+    /// Category slugs to leave out (a game with any of them in any position is excluded). At most
+    /// [`MAX_EXCLUDE`] given; slugs that are not known categories are ignored (they match no game).
+    pub exclude: Vec<String>,
     /// Opaque cursor from the previous page.
     pub cursor: Option<String>,
     /// 1..=100, default 48.
     pub limit: Option<u32>,
+}
+
+/// At most this many category slugs can be excluded (`ListQuery::exclude`, `ListFilter::exclude`).
+pub const MAX_EXCLUDE: usize = 20;
+
+/// Filters of `sections` and of the related games of `game` (the listing has them in [`ListQuery`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ListFilter {
+    /// Only games known to work on mobile.
+    pub mobile: bool,
+    /// Category slugs to leave out (see [`ListQuery::exclude`]).
+    pub exclude: Vec<String>,
+}
+
+/// The known categories among `exclude` (sorted, deduplicated); more than [`MAX_EXCLUDE`] given is an error.
+fn known_exclusions(exclude: &[String]) -> Result<Vec<&'static str>> {
+    if exclude.len() > MAX_EXCLUDE {
+        return Err(CatalogError::InvalidInput(format!("at most {MAX_EXCLUDE} categories can be excluded")));
+    }
+    let mut known: Vec<&'static str> =
+        exclude.iter().filter_map(|c| Category::from_slug(c.trim())).map(Category::slug).collect();
+    known.sort_unstable();
+    known.dedup();
+    Ok(known)
+}
+
+/// `g.id NOT IN (…)` for the known exclusions. The slugs come from the fixed category table (never from the caller),
+/// so they are written into the SQL text; empty → `None`.
+fn exclusion_sql(known: &[&'static str]) -> Option<String> {
+    if known.is_empty() {
+        return None;
+    }
+    let list = known.iter().map(|c| format!("'{c}'")).collect::<Vec<_>>().join(",");
+    Some(format!("g.id NOT IN (SELECT game_id FROM game_categories WHERE category IN ({list}))"))
+}
+
+/// The SQL conditions of a [`ListFilter`] (each prefixed with ` AND `).
+fn filter_sql(filter: &ListFilter) -> Result<String> {
+    let mut out = String::new();
+    if filter.mobile {
+        out.push_str(" AND g.mobile = 1");
+    }
+    if let Some(ex) = exclusion_sql(&known_exclusions(&filter.exclude)?) {
+        out.push_str(" AND ");
+        out.push_str(&ex);
+    }
+    Ok(out)
 }
 
 /// `GameSummary`.
@@ -439,7 +489,8 @@ impl Catalog {
         if template.starts_with('/') {
             return format!("{}{template}", self.render.proxy_origin.trim_end_matches('/'));
         }
-        let page_url = format!("{}/games/{slug}", self.render.app_origin.trim_end_matches('/'));
+        // The page the visitor sees (the player route of the app, WAVE-C D2).
+        let page_url = format!("{}/play/{slug}", self.render.app_origin.trim_end_matches('/'));
         let c = &self.config;
         let mut out = template.replace("{gamepix_sid}", &encode_component(&c.gamepix.sid));
         out = out.replace("{page_url}", &encode_component(&page_url));
@@ -465,8 +516,9 @@ impl Catalog {
     pub fn list(&self, conn: &Connection, q: &ListQuery) -> Result<ListPage> {
         let limit = q.limit.unwrap_or(DEFAULT_LIMIT);
         if !(1..=MAX_LIMIT).contains(&limit) {
-            return Err(CatalogError::InvalidInput(format!("limit must be 1..={MAX_LIMIT}")));
+            return Err(CatalogError::InvalidInput(format!("limit must be 1-{MAX_LIMIT}")));
         }
+        let excluded = known_exclusions(&q.exclude)?;
         let text = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
         if text.is_some_and(|t| t.chars().count() > MAX_QUERY_CHARS) {
             return Err(CatalogError::InvalidInput(format!("q is limited to {MAX_QUERY_CHARS} characters")));
@@ -482,13 +534,13 @@ impl Catalog {
         }
         let category = match q.category.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             Some(c) => Some(
-                Category::from_slug(c).ok_or_else(|| CatalogError::InvalidInput(format!("unknown category {c:?}")))?,
+                Category::from_slug(c).ok_or_else(|| CatalogError::InvalidInput(format!("unknown category: {c}")))?,
             ),
             None => None,
         };
         let tag = match q.tag.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
             Some(t) => {
-                Some(normalize_tag_filter(t).ok_or_else(|| CatalogError::InvalidInput(format!("invalid tag {t:?}")))?)
+                Some(normalize_tag_filter(t).ok_or_else(|| CatalogError::InvalidInput(format!("invalid tag: {t}")))?)
             }
             None => None,
         };
@@ -498,12 +550,19 @@ impl Catalog {
             tag.as_deref().unwrap_or(""),
             if q.mobile { "m" } else { "" },
             if q.include_link_out { "l" } else { "" },
+            &excluded.join(","),
         ]);
         let cursor = match q.cursor.as_deref().filter(|c| !c.is_empty()) {
-            Some(c) => Some(
-                Cursor::decode(c, &self.cursor, sort.code(), fp, sort.kind())
-                    .map_err(|e| CatalogError::InvalidInput(format!("invalid cursor ({e})")))?,
-            ),
+            Some(c) => Some(Cursor::decode(c, &self.cursor, sort.code(), fp, sort.kind()).map_err(|e| {
+                CatalogError::InvalidInput(
+                    if e.starts_with("cursor belongs to") {
+                        "cursor does not belong to this query"
+                    } else {
+                        "invalid cursor"
+                    }
+                    .into(),
+                )
+            })?),
             None => None,
         };
 
@@ -517,6 +576,9 @@ impl Catalog {
         if q.mobile {
             conds.push("g.mobile = 1".into());
         }
+        // Exclusions keep every other filter's plan: they are tested per candidate row (`game_categories` primary
+        // key), and their totals are counted below (no facet row exists for them).
+        conds.extend(exclusion_sql(&excluded));
         // Filters that match a large share of the catalog are tested while walking the sort index in order
         // (`+g.id` keeps their IN list from driving the loop), so a page costs the same at any depth; selective
         // ones drive the query from their member list (see `walk_sort_index`).
@@ -538,10 +600,12 @@ impl Catalog {
         // Totals of unfiltered, category-only and tag-only listings come from the facet counts. Other totals are
         // counted through the narrow `games_listed_search` index (no row reads), driven by the most selective
         // list (no `+`): the full-text matches when there is a query.
-        let total: i64 = match (&fts, category, &tag) {
-            (None, None, None) => listed,
-            (None, Some(c), None) => self.facet_count(conn, "category", c.slug(), q.mobile, q.include_link_out)?,
-            (None, None, Some(t)) => self.facet_count(conn, "tag", t, q.mobile, q.include_link_out)?,
+        let total: i64 = match (&fts, category, &tag, excluded.is_empty()) {
+            (None, None, None, true) => listed,
+            (None, Some(c), None, true) => {
+                self.facet_count(conn, "category", c.slug(), q.mobile, q.include_link_out)?
+            }
+            (None, None, Some(t), true) => self.facet_count(conn, "tag", t, q.mobile, q.include_link_out)?,
             _ => {
                 let mut count_conds = conds.clone();
                 count_conds.extend(filters.iter().map(|f| format!("g.id {}", f.1)));
@@ -673,9 +737,9 @@ impl Catalog {
     ///
     /// `featured` lists the admin's picks (newest pick first) and is topped up with the games that have the
     /// highest source quality score, so the section is never empty on a fresh install.
-    pub fn sections(&self, conn: &Connection, limit: usize) -> Result<Sections> {
+    pub fn sections(&self, conn: &Connection, limit: usize, filter: &ListFilter) -> Result<Sections> {
         let n = Value::Integer(limit.clamp(1, MAX_SECTION) as i64);
-        let base = "FROM games g WHERE g.listed = 1 AND g.playable = 1";
+        let base = format!("FROM games g WHERE g.listed = 1 AND g.playable = 1{}", filter_sql(filter)?);
         let mut featured = self.summaries(
             conn,
             &format!("SELECT {SUMMARY_COLS} {base} AND g.featured = 1 ORDER BY g.featured_at DESC, g.id DESC LIMIT ?"),
@@ -772,7 +836,8 @@ impl Catalog {
     }
 
     /// `GET /api/games/:slug`: detail plus related games (same categories / tags), or `None`.
-    pub fn game(&self, conn: &Connection, slug: &str, related: usize) -> Result<Option<GamePage>> {
+    pub fn game(&self, conn: &Connection, slug: &str, related: usize, filter: &ListFilter) -> Result<Option<GamePage>> {
+        let filter_conds = filter_sql(filter)?;
         if !crate::slug::is_valid_slug(slug) {
             return Ok(None);
         }
@@ -843,7 +908,8 @@ impl Catalog {
             orientation,
             flags: serde_json::from_str(&flags).unwrap_or_default(),
         };
-        let related = if related > 0 { self.related(conn, id, playable, related)? } else { Vec::new() };
+        let related =
+            if related > 0 { self.related_where(conn, id, playable, related, &filter_conds)? } else { Vec::new() };
         Ok(Some(GamePage { game, related }))
     }
 
@@ -851,6 +917,18 @@ impl Catalog {
     /// bounded (the most popular games of each category plus games sharing a tag), so the cost does not grow with
     /// the size of a category.
     pub fn related(&self, conn: &Connection, id: i64, playable_only: bool, limit: usize) -> Result<Vec<GameSummary>> {
+        self.related_where(conn, id, playable_only, limit, "")
+    }
+
+    /// [`Catalog::related`] with extra conditions on the candidates (`filter_sql`).
+    fn related_where(
+        &self,
+        conn: &Connection,
+        id: i64,
+        playable_only: bool,
+        limit: usize,
+        extra: &str,
+    ) -> Result<Vec<GameSummary>> {
         let cats: Vec<(String, i64)> = conn
             .prepare_cached("SELECT category, position FROM game_categories WHERE game_id = ?1 ORDER BY position")?
             .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -882,7 +960,7 @@ impl Catalog {
         args.push(Value::Integer(limit.clamp(1, 48) as i64));
         let sql = format!(
             "SELECT {SUMMARY_COLS} FROM ({}) cand JOIN games g ON g.id = cand.id
-             WHERE g.listed = 1 AND g.id <> ? {playable}
+             WHERE g.listed = 1 AND g.id <> ? {playable}{extra}
              GROUP BY g.id ORDER BY sum(cand.w) DESC, g.pop_score DESC, g.id DESC LIMIT ?",
             parts.join(" UNION ALL ")
         );
@@ -925,6 +1003,28 @@ impl Catalog {
         }
         hosts.sort();
         Ok(hosts)
+    }
+
+    /// Visible iframe games per embed host (`host[:port]` exactly as [`Catalog::embed_hosts`] produces them),
+    /// sorted by host. Feeds the server's pending-host report (WAVE-C D4).
+    pub fn embed_host_counts(&self, conn: &Connection) -> Result<Vec<(String, u64)>> {
+        let mut stmt = conn.prepare_cached(
+            "SELECT substr(embed_url, 9, instr(substr(embed_url, 9), '/') - 1) AS h, count(*) FROM games
+             WHERE embed_kind = 'iframe' AND status = 'active' AND source_enabled = 1 AND embed_url LIKE 'https://%'
+             GROUP BY h ORDER BY h",
+        )?;
+        let mut out = Vec::new();
+        for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+            let (h, n) = row?;
+            let valid = crate::url::Url::parse(&format!("https://{h}/")).is_some_and(|u| match u.port {
+                Some(p) => h == format!("{}:{p}", u.host),
+                None => u.host == h,
+            });
+            if valid {
+                out.push((h, u64::try_from(n).unwrap_or(0)));
+            }
+        }
+        Ok(out)
     }
 
     /// `"catalog"` object of `GET /admin/diagnostics`.

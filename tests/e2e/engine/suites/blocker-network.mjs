@@ -10,6 +10,12 @@ import { tabText } from '../lib/tab-read.mjs';
 
 export const ENGINES = ['scramjet', 'ultraviolet'];
 
+/**
+ * The transport of the blocker suites' driver pages (WAVE-B3 §12.4 "blocker-network (libcurl; once more with epoxy)"):
+ * E2E_BLOCKER_TRANSPORT=epoxy runs them over epoxy, the default is libcurl. Recorded in every row's `transport`.
+ */
+export const TRANSPORT = process.env.E2E_BLOCKER_TRANSPORT === 'epoxy' ? 'epoxy' : 'libcurl';
+
 /** The run's listing → FilterListRef[] of every available default list plus the resources (what x4's filterListRefs does). */
 export async function listRefs(ctx, { only = null, extra = [] } = {}) {
   const listing = await ctx.stack.blocker.listing();
@@ -105,7 +111,7 @@ export async function forEngines(ctx, test, fn, { engines = ENGINES } = {}) {
     } catch (err) {
       r = { result: 'fail', notes: `threw: ${String(err?.stack ?? err).slice(0, 600)}` };
     }
-    ctx.record({ test, engine, transport: 'libcurl', ...r });
+    ctx.record({ test, engine, transport: TRANSPORT, ...r });
   }
 }
 
@@ -114,7 +120,7 @@ export function partOn(ctx, part) {
 }
 
 export async function openBlockerApp(ctx, context, extra = {}) {
-  return ctx.openApp(context, { route: 'profile:e2e-vpn', fallback: '0', ...extra });
+  return ctx.openApp(context, { route: 'profile:e2e-vpn', fallback: '0', transport: TRANSPORT, ...extra });
 }
 
 export async function run(ctx) {
@@ -130,7 +136,7 @@ export async function run(ctx) {
     const app = await openBlockerApp(ctx, context);
     const caps = (await app.gnome(() => window.gnomeTest.init?.capabilities ?? null)) ?? [];
     if (!caps.includes('blocker')) {
-      ctx.record({ test: 'blocker-network: capability', result: 'fail', notes: `the engine host does not offer blocker: ${JSON.stringify(caps)} (build without GNOME_ENGINE_TEST_CAPABILITIES=blocker?)` });
+      ctx.record({ test: 'blocker-network: capability', result: 'fail', notes: `the engine host does not offer blocker: ${JSON.stringify(caps)}` });
       await app.close();
       return;
     }

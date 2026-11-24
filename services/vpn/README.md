@@ -19,10 +19,17 @@ Background and sources: `docs/research/mullvad-vpn.md` §4-5 (tunnel options, SO
 
 ## Before you start: terms, devices, branding
 
-- **Your own account, your own household.** Mullvad's terms forbid using the service "to provide a service similar to
-  that provided by Mullvad or other services where VPN constitutes a significant part of the service". Run VPN
-  locations only on a GNOME instance used by you and your household. Do not offer them on a public or shared
-  instance. The same applies to any other VPN provider whose terms say so.
+- **Only egress you may share with everyone who can use your instance.** Run the locations over connections you are
+  authorized to share with the people who use the server. Consumer VPN subscriptions, Mullvad's among them, do not
+  allow offering the VPN to others: Mullvad's terms forbid using the service "to provide a service similar to that
+  provided by Mullvad or other services where VPN constitutes a significant part of the service". GNOME's access modes
+  (open, access code, accounts) do not change what a provider's terms allow. No document of GNOME presents any provider
+  as usable for a multi-user service.
+- **GNOME warns you.** `gnome-server config check` and the startup log warn when VPN locations are configured and
+  everyone who can open the server or register on it can use them (`GNOME_ACCESS_MODE=open`, or
+  `GNOME_ACCESS_MODE=accounts` with `GNOME_REGISTRATION=open`), and remind code-mode operators to keep the access code
+  within the people their egress's terms allow. Set `GNOME_VPN_EGRESS_SHARED_OK=true` only when your egress's terms
+  allow every person who can use the instance; it silences both warnings.
 - **Devices.** A Mullvad account allows 5 devices. Generate a **dedicated WireGuard key for this server** (it uses one
   device slot); never reuse the key of the official app or of another machine. One tunnel serves every location in
   both recipes below.
@@ -155,10 +162,71 @@ at connect time); `localhost` is refused because it may resolve to `::1` while H
   `upstreams[]` (`status`, `latency_ms`, `checked_at`, `error`), `/admin/metrics` → `gnome_wisp_upstream_up{id=…}`,
   `GET /api/health` on the app origin → `wisp.<id>` (the proxy origin's minimal answer names only `direct`). A result older than 3 minutes counts as down. This proves the instance answers,
   not that its exit works.
-- **Exit.** Open `https://am.i.mullvad.net/json` (Mullvad's public connection check; `verify_url` in
-  `GET /api/vpn/locations`) inside GNOME with the location selected, so it goes through that location's path. It
-  reports the exit IP, city and whether it is a Mullvad exit. Do it once per location after setup and after changing
-  an overlay.
+- **Exit (server-side check).** With `GNOME_VPN_CHECK_URL` set, gnome-server checks each location's exit itself
+  through that location's own HolyWisp instance (`/wisp/p/<id>/`): a Wisp stream to the check service, TLS for
+  `https:`, one `GET` with the neutral `User-Agent: exit-check/1` (it names no product and no instance; nothing about
+  users is sent — the service sees the location's exit address). It runs every `GNOME_VPN_CHECK_INTERVAL_MIN` minutes
+  (default 15, ± 20 %, the first checks spread randomly over the whole first interval; `0` = only on request) and on
+  demand (`POST /api/vpn/locations/<id>/check`, at most once a minute per location). The result is `exit` in
+  `GET /api/vpn/locations` (shown only to clients the access policy lets use the proxy), `/admin/diagnostics` → `vpn`
+  and `/admin/metrics` → `gnome_vpn_exit_checks_total{id,result}`, `gnome_vpn_exit_ok{id}`,
+  `gnome_vpn_exit_checked_seconds{id}`. Errors: `upstream_unreachable` (the instance does not answer, or the health
+  job has it down), `connect_failed` (the instance answers but its streams do not connect: a tunnel that fails
+  closed), `tls_failed`, `http_status`, `bad_answer`, `timeout` (15 s).
+  - **What it proves:** the location's streams reach the internet and the check service names an exit address
+    (country and city when it reports them, and whether it matches the profile's country).
+  - **What it does not prove:** that a given user's pages use that location. That is the app's route choice and the
+    route-bound Wisp tickets. Exit checks never change routing or the connection state; a failed check is a warning
+    on the VPN page.
+  - **Nothing is checked until you set a check service.** `GNOME_VPN_CHECK_URL` is empty by default: no server-side
+    checks, no browser-side checks (`verify_url: null`). `config check` warns when locations are configured without
+    one.
+- **Exit (the browser's check).** The same URL is `verify_url` in `GET /api/vpn/locations`; the VPN page's
+  "Check exit" loads it inside GNOME through the selected location. A page that reaches the engine host can forge
+  that answer, so the page shows it as what the check service reported, never as proof.
+- **IPv6.** Each location's network namespace must tunnel or block IPv6. To see an IPv6 leak beside an IPv4-only
+  tunnel (or the reverse), set `GNOME_VPN_CHECK_URL_V6` to the same service under an IPv6-only name (a separate name
+  with only AAAA records, e.g. `ipv6.check.example.net`); every check then runs twice and fills `exit.v6`.
+
+### A check endpoint you run yourself
+
+Any HTTPS endpoint **outside the tunnels** that answers `{"ip": "<the client's address>"}` works (`country` and
+`city` are optional; `country_code` or `country_iso` as two letters makes the country comparison exact). Caddy:
+
+```caddyfile
+check.example.net, ipv6.check.example.net {
+	header Content-Type application/json
+	header Cache-Control no-store
+	respond `{"ip":"{remote_host}"}` 200
+}
+```
+
+nginx (with your certificate):
+
+```nginx
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name check.example.net ipv6.check.example.net;
+    ssl_certificate     /etc/ssl/check.example.net/fullchain.pem;
+    ssl_certificate_key /etc/ssl/check.example.net/privkey.pem;
+    location = /json {
+        default_type application/json;
+        add_header Cache-Control no-store always;
+        return 200 '{"ip":"$remote_addr"}';
+    }
+}
+```
+
+Give `check.example.net` A (and AAAA) records and `ipv6.check.example.net` only an AAAA record, then set
+`GNOME_VPN_CHECK_URL=https://check.example.net/json` (Caddy answers on every path) and
+`GNOME_VPN_CHECK_URL_V6=https://ipv6.check.example.net/json`. Neither example was run in this repository (no Caddy or
+nginx on the build machine; see "Tested here").
+
+A third party's check service (for example a VPN provider's connection check, such as `https://am.i.mullvad.net/json`,
+which also reports `mullvad_exit_ip`) may be used only where its operator allows automated checks. It sees each
+location's exit address at every interval.
+
 - **Fail closed.** Stop the tunnel (`docker compose stop gluetun`, or `systemctl stop wg-quick@wg-mullvad`, which
   also stops the bound instances); the location's pages must stop loading instead of loading directly. The gateway
   never sends a `/wisp/p/<id>/` connection anywhere but that profile's upstream.
@@ -179,3 +247,9 @@ parsing, routing to profile upstreams, health probes and `/api/vpn/locations` ar
 `services/holywisp/tests/smoke.sh` runs the egress overlay through a local SOCKS5 stand-in. The full chain with a real
 Mullvad tunnel and gluetun was **not** run in this repository (it needs an operator account); follow "Verify" after
 setting it up.
+
+The server-side exit check (Wisp client, TLS, every error class, the access gate, on-demand reuse, the IPv6 name) is
+covered by `backend/tests/vpn_exit.rs` against an in-process Wisp server and local HTTP/TLS check endpoints (a
+test-only CA). The Caddy and nginx examples above were **not** run here (neither is installed on the build machine
+and nothing is installed system-wide by the build); the integration step runs them before pointing the ignored online
+test (`VPN_CHECK_ONLINE_URL`, `HOLYWISP_BIN`) at one of them.

@@ -182,7 +182,7 @@ async fn diagnostics_document() {
     assert_eq!(upstreams.len(), 1, "{upstreams:?}");
     assert_eq!((&upstreams[0]["id"], &upstreams[0]["addr"]), (&"direct".into(), &"127.0.0.1:6001".into()));
     assert_eq!(d["build"]["version"], gnome_server::VERSION);
-    assert_eq!(d["modules"], serde_json::json!(["core", "accounts", "wisp", "vpn", "filters"]));
+    assert_eq!(d["modules"], serde_json::json!(["core", "accounts", "wisp", "vpn", "filters", "games"]));
     assert_eq!(d["proxy"]["isolated"], false);
     assert_eq!(d["proxy"]["mode"], "single-origin");
     assert!(d["proxy"]["explanation"].as_str().unwrap().contains("single-origin"));

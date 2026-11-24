@@ -130,6 +130,39 @@ describe('browser controller with the fake engine host', () => {
     expect(host.commandsOf('tab.navigate').at(-1)!.p.permissions.autoplay).toBe('allow');
   });
 
+  it('route-bound tickets (WAVE-C D23): a route change mints for the new route and hands it over', { timeout: 20_000 }, async () => {
+    const before = server.config;
+    const mints = (): unknown[] =>
+      (vi.mocked(fetch).mock.calls as unknown as Array<[string, RequestInit | undefined]>)
+        .filter(([u]) => u === '/api/wisp/ticket')
+        .map(([, init]) => JSON.parse(String(init?.body ?? '{}')).route);
+    server.config = { ...config, features: { ...config.features, vpn_gateway: true }, wisp: { ...config.wisp, profiles: [{ id: 'se-got', label: 'Sweden', country_code: 'se', city: 'Gothenburg', path: '/wisp/p/se-got/' }] } };
+    try {
+      await until(() => browser.engineState === 'ready', 'engine ready');
+      const n = mints().length;
+      expect(mints().every((r) => r === 'default')).toBe(true);
+      const live = browser.model.tabs.filter((t) => t.live && t.url).length;
+      await settings.set('vpn', 'preferredLocation', 'se-got');
+      await settings.set('vpn', 'mode', 'gateway');
+      // (Unit tests run without Svelte effects: a GNOME load flushes the snapshot, which sees the route change.)
+      browser.openUrl('https://vpn-route.example/');
+      await within(() => host.commands.some((c) => c.type === 'settings' && c.p.settings.route.kind === 'profile'), 'profile snapshot');
+      await within(() => mints().length === n + 1 && host.commandsOf('ticket').length > 0, 'profile ticket');
+      expect(mints().slice(n)).toEqual([{ profile: 'se-got' }]);
+      // The tabs live before the change count as "on the previous route" until they load a page.
+      expect(browser.previousRouteTabs).toBe(live);
+      // Off again: the engine host's next ticket request mints for the default route.
+      await settings.set('vpn', 'mode', 'off');
+      host.emit('needTicket', { reason: 'expiring' });
+      await within(() => mints().length === n + 2, 'default mint', 8000);
+      expect(mints().slice(n)).toEqual([{ profile: 'se-got' }, 'default']);
+    } finally {
+      await settings.set('vpn', 'mode', 'off');
+      await settings.set('vpn', 'preferredLocation', null);
+      server.config = before;
+    }
+  });
+
   it('decideOpen: a page’s claim alone never opens a tab; with the app document’s activation it does', async () => {
     const opener = browser.active!;
     const before = browser.model.tabs.length;
@@ -349,5 +382,9 @@ describe('browser controller with the fake engine host', () => {
       await settings.set('vpn', 'preferredLocation', null);
       server.config = before;
     }
+  });
+
+  it('verifyExit: null while the engine host does not offer vpnVerify', async () => {
+    expect(await browser.verifyExit('http://127.0.0.1:1/json')).toBeNull();
   });
 });

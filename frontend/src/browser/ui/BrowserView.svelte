@@ -16,7 +16,9 @@
   const t = $derived(browser.model.active);
   const engineBusy = $derived(['idle', 'starting', 'connecting', 'failed', 'mismatch', 'unresponsive'].includes(browser.engineState));
   const showEngineState = $derived(!!t?.url && engineBusy && browser.visible);
-  const showFrame = $derived(!!t?.url && t.live && !showEngineState);
+  // browser.visible: `.engine-slot.shown { visibility: visible }` would otherwise override the inactive persistent
+  // layer's `visibility: hidden` (app/Shell.svelte), and the live tab would paint under every GNOME page.
+  const showFrame = $derived(!!t?.url && t.live && !showEngineState && browser.visible);
   /** A tab without an address shows Home over the shell's wallpaper (the content area stays see-through). */
   const newTabHome = $derived(!!t && !t.url && browser.visible && settings.value.browser.newTab === 'home');
 

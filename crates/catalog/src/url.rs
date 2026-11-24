@@ -69,6 +69,16 @@ impl Url {
         Some(Url { scheme, host, port, path, query })
     }
 
+    /// Whether the path has no `.` or `..` segment and no `%2e`, `%2f` or `%5c` (any case): such paths can name
+    /// another resource than they appear to (WAVE-C D4), so embed URLs must not have them.
+    pub fn has_plain_path(&self) -> bool {
+        let lower = self.path.to_ascii_lowercase();
+        if lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") {
+            return false;
+        }
+        !self.path.split('/').any(|seg| seg == "." || seg == "..")
+    }
+
     /// Serialize back to a string.
     pub fn as_string(&self) -> String {
         let mut s = format!("{}://{}", self.scheme, self.host);
@@ -233,5 +243,25 @@ mod tests {
         v.set_query_param("clid", "{playgama_clid}");
         assert_eq!(v.as_string(), "https://playgama.com/export/game/x?clid={playgama_clid}");
         assert_eq!(encode_component("https://g.example/games/a b"), "https%3A%2F%2Fg.example%2Fgames%2Fa%20b");
+    }
+
+    #[test]
+    fn plain_paths() {
+        let plain = |s: &str| Url::parse(s).unwrap().has_plain_path();
+        assert!(plain("https://play.gamepix.com/x/embed?sid={gamepix_sid}"));
+        assert!(plain("https://a.example/b.c/d..e/"));
+        for bad in [
+            "https://a.example/a/../b",
+            "https://a.example/a/./b",
+            "https://a.example/a/%2e%2e/b",
+            "https://a.example/a/%2E%2e/b",
+            "https://a.example/a%2fb",
+            "https://a.example/a%2Fb",
+            "https://a.example/a%5cb",
+            "https://a.example/a%5Cb",
+            "https://a.example/..",
+        ] {
+            assert!(!plain(bad), "{bad}");
+        }
     }
 }

@@ -27,7 +27,9 @@ async fn health_and_config() {
     assert_eq!(v["registration"], "open");
     assert_eq!(v["features"]["accounts"], true);
     assert_eq!(v["features"]["sync"], true);
-    assert_eq!(v["features"]["games"], false);
+    // WAVE-C: the default catalog (GamePix; OSS needs two origins) is prepared, so the Games page is offered.
+    assert_eq!(v["features"]["games"], true);
+    assert_eq!(v["features"]["thumb_proxy"], true);
     assert_eq!(v["wisp"]["path"], "/wisp/");
     assert_eq!(v["wisp"]["profiles"], json!([]));
     assert_eq!(v["engines"], json!({"default": "scramjet", "scramjet": true, "ultraviolet": true}));
@@ -324,8 +326,11 @@ async fn security_headers_everywhere() {
         let res = app.send(get(path)).await;
         assert_eq!(res.header("x-content-type-options"), Some("nosniff"), "{path}");
         assert_eq!(res.header("referrer-policy"), Some("no-referrer"), "{path}");
-        assert_eq!(res.header("x-frame-options"), Some("SAMEORIGIN"), "{path}");
-        assert!(res.header("content-security-policy").is_some_and(|c| c.contains("frame-ancestors 'self'")), "{path}");
+        // The shell (`/`) is never framed (WAVE-C D4); other app answers may be framed by the app itself.
+        let (xfo, ancestors) =
+            if path == "/" { ("DENY", "frame-ancestors 'none'") } else { ("SAMEORIGIN", "frame-ancestors 'self'") };
+        assert_eq!(res.header("x-frame-options"), Some(xfo), "{path}");
+        assert!(res.header("content-security-policy").is_some_and(|c| c.contains(ancestors)), "{path}");
         assert!(res.header("strict-transport-security").is_none(), "HSTS is off by default");
     }
 }

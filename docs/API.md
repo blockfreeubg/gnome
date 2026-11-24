@@ -53,6 +53,9 @@ stated. This document is the contract between the frontend and the backend — c
   | `wisp_ticket` | `POST /api/wisp/ticket` | – | 30 / 30 per min |
   | `wisp_upgrade` | `/wisp/` upgrades and ticket probes together (proxy origin) | 60 / 60 per min | – |
   | `admin` | every admin-listener request (checked before the token) | 60 / 120 per min | – |
+  | `thumb` | `GET /api/thumb/:id`, counted instead of `api` (a long scroll loads hundreds) | 600 / 1200 per min | – |
+  | `thumb_fetch` | thumbnail cache misses that need an upstream fetch (on top of `thumb`) | 60 / 120 per min | – |
+  | `vpn_check` | `POST /api/vpn/locations/:id/check` (the VPN module also keeps a 60 s gap per location) | 6 / 6 per min | – |
 
   Exhausted → `429 rate_limited` with `Retry-After` (whole seconds) and `retry_after_s`.
 
@@ -90,8 +93,8 @@ single-origin mode, where `isolated` is `false`; `null` if the server cannot tel
 (the engine-host and bare-mux worker policies then allow `ws: wss:`); `wisp.profiles` lists the
 VPN gateway profiles (empty without `GNOME_VPN_PROFILES`; `features.vpn_gateway` is `true` when there is at least one).
 `features.sync` follows `features.accounts` (`GNOME_ACCOUNTS`); `registration` is `"closed"` when accounts are off.
-`features.games` and `features.thumb_proxy` are set by the game catalog module, so they are `false` in this build (the
-catalog arrives in Wave C; the example shows a server with it).
+`features.games` is `true` while at least one catalog source is enabled (`GNOME_CATALOG_SOURCES`, not `none`) and
+`features.thumb_proxy` follows `GNOME_THUMB_PROXY`; both are set by the games module.
 
 ### `POST /api/session`
 Creates (or refreshes) the anonymous session cookie `gnome_sid` (same session id, new 30-day expiry).
@@ -108,20 +111,33 @@ whenever `gnome_auth` is valid. `proxy` tells whether these cookies authorize th
 
 ### `POST /api/wisp/ticket`
 Mints a Wisp ticket for the current session (anonymous `gnome_sid` in `open`/`code` mode — created on the fly in `open`
-mode; `gnome_auth` in `accounts` mode). CSRF rules apply. Rate limit: 30/min/session (creating the anonymous session
-in `open` mode also counts against `session_create`, 20/min/IP). The request body is ignored.
-`200 {"ticket":"w1.<exp_s>.<session_ref>.<mac>","expires_at":ms,"wisp_url":"wss://p.gnome.example.com/wisp/"}`
-(+ `Set-Cookie: gnome_sid=…` when the anonymous session was created) · `401 access_code_required` (`code` mode
-without a session) · `401 login_required` (`accounts` mode) · `429 rate_limited`.
+mode; `gnome_auth` in `accounts` mode) **and the route the app chose** (Wave C D23). CSRF rules apply. Rate limit:
+30/min/session (creating the anonymous session in `open` mode also counts against `session_create`, 20/min/IP).
+Body (optional): `{"route": "default"}` or `{"route": {"profile": "<id>"}}`; no body, `{}` or `"route": null` =
+`default` (the direct route `/wisp/`).
+`200 {"ticket":"w2.<exp_s>.<iat_s>.<route>.<session_ref>.<mac>","expires_at":ms,"wisp_url":"wss://p.gnome.example.com/wisp/"}`
+(+ `Set-Cookie: gnome_sid=…` when the anonymous session was created) · `400 bad_request` (the body is not JSON) ·
+`422 validation_failed` with `fields.route` ("unknown VPN location", or `must be "default" or {"profile": "<id>"}`)
+· `401 access_code_required` (`code` mode without a session) · `401 login_required` (`accounts` mode) ·
+`429 rate_limited`.
 - `expires_at` = min(now + `GNOME_WISP_TICKET_TTL_S`, the session's expiry); the engine host renews before it.
-- Ticket: `exp_s` = expiry in Unix **seconds** (decimal, no leading zeros); `session_ref` = 16 bytes base64url (22
-  chars), a stable non-secret digest of the session (the same for every ticket of that session; it cannot be turned
-  back into a cookie); `mac` = HMAC-SHA256 base64url (43 chars) over `w1.<exp_s>.<session_ref>` with a key derived
-  from the server's secret key for tickets only (bound to the access mode and code, like anonymous sessions: changing
-  them invalidates outstanding tickets). Treat it as opaque.
+- Ticket (`w2`): `exp_s` = expiry and `iat_s` = mint time, Unix **seconds** (decimal, no leading zeros); `route` = `d`
+  (direct) or `p` followed by the profile id in unpadded base64url (ids may contain the separator `.`); `session_ref`
+  = 16 bytes base64url (22 chars), a stable non-secret digest of the session (the same for every ticket of that
+  session; it cannot be turned back into a cookie); `mac` = HMAC-SHA256 base64url (43 chars) over everything before
+  it, with a key derived from the server's secret key for tickets only (bound to the access mode and code, like
+  anonymous sessions: changing them invalidates outstanding tickets). `w1` tickets (no route) are refused as
+  malformed. Treat it as opaque.
+- A ticket works **only on its own route**: `/wisp/?t=…` for `d`, `/wisp/p/<id>/?t=…` for that profile. The gateway
+  refuses it with `401 wisp_ticket_wrong_route` on another path, `401 wisp_ticket_stale` when it was minted before
+  the server process started (the engine host re-mints through `needTicket {reason: 'rejected'}`), and, for a
+  default-route ticket, `401 wisp_ticket_superseded` when the session minted a profile-route ticket after it (the
+  latest profile mint per session is kept in memory for the ticket TTL). The 15 s session re-check also closes that
+  session's open default-route connections the superseded rule now refuses. Connections on a previous *profile* route
+  keep running until their page reloads (WAVE-C O16).
 - `wisp_url` is `ws://…` when the proxy origin is plain `http://` (development). Connect to
   `<wisp_url>?t=<ticket>&/` (canonical form, see "Wisp" below); for a VPN profile use the profile's `path` on the same
-  origin: `wss://<proxy origin>/wisp/p/<id>/?t=<ticket>&/`.
+  origin with a ticket minted for that profile: `wss://<proxy origin>/wisp/p/<id>/?t=<ticket>&/`.
 - `GNOME_WISP_TICKET_TTL_S` defaults to 3600 (1 h; at most 604800). A ticket is checked only when a connection is
   upgraded: open connections outlive its expiry, so the engine host renews before `expires_at` (and after a probe
   answers 401) for its *next* connection.
@@ -182,9 +198,11 @@ IDs are UUIDs (8-4-4-4-12 hex). URLs are validated (`http:`/`https:` only, ≤ 4
 timestamps must be ≥ 0 and at most 24 h in the future.
 
 ## Games catalog (public)
-**Not served by this build** (Wave C): the shapes below are what the `gnome-catalog` crate already produces
-(`crates/catalog/src/query.rs`); until the catalog module is mounted these routes answer `404 not_found` and
-`/api/config` reports `features.games: false`.
+Served by the games module on the **app origin** in every access mode (D8: `GNOME_ACCESS_MODE` means "who may use the
+proxy"). All under the `api` rate class except `/api/thumb/` (`thumb`); JSON; `Cache-Control: no-store` unless
+stated. While the module's start-up hook has not run, failed, or the database cannot be read: `503 unavailable` with
+`Retry-After: 30`. With `GNOME_CATALOG_SOURCES=none` the routes answer `404` and `/api/config` reports
+`features.games: false`.
 
 `GameSummary = {"id": number, "slug": string, "title": string, "developer": string|null, "thumbnail": string|null,
 "categories": string[], "mobile": boolean, "source": string, "added_at": ms, "plays": number, "playable": boolean}`
@@ -194,19 +212,31 @@ link-out entry (itch.io, js13kGames): open `source_url` in a new tab, never in a
 `GameDetail = GameSummary & {"description": string, "instructions": string, "tags": string[], "embed_url": string,
 "width": number|null, "height": number|null, "source_url": string|null, "developer_url": string|null,
 "license": string|null, "published_at": ms|null, "attribution": string, "embed_kind": "iframe"|"selfhost"|"link",
-"orientation": "landscape"|"portrait"|"any"|null, "flags": string[]}` — `flags` ⊆ `kids_friendly`, `no_blood`,
-`no_cruelty`, `iap`, `paid`.
+"orientation": "landscape"|"portrait"|"any"|null, "flags": string[], "embed_allowed": boolean, "oss":
+{"repository": string, "commit": string, "license_file_url": string}|null}` — `flags` ⊆ `kids_friendly`, `no_blood`,
+`no_cruelty`, `iap`, `paid`. `embed_allowed` = the server's frame policy accepts this game (its embed host is a fixed
+host of an enabled source or an operator-approved developer host; always `false` for `link`); `oss` is set for
+open-source games only (`license_file_url` = `<proxy origin>/oss/<slug>/<license file>`). Titles, descriptions and
+instructions are plain text (they may contain `<`).
+
+Query-parameter problems answer `400 bad_request` with a message naming the parameter: `limit must be 1-100`,
+`unknown category: <slug>`, `unknown sort: <value>`, `invalid cursor`, `cursor does not belong to this query`,
+`q is limited to 100 characters`, `at most 20 categories can be excluded`, `ids must be comma-separated integers`,
+`at most 200 ids`, `tag prefix is limited to 40 characters`. Unknown `exclude` slugs are ignored (they match no game).
 
 | Endpoint | Notes |
 | --- | --- |
-| `GET /api/games?q=&category=&tag=&sort=&mobile=&cursor=&limit=` | `sort` ∈ `relevance` (default when `q`), `popular` (default), `trending`, `new`, `featured`, `az`. `limit` 1–100 (default 48). Keyset pagination: opaque `cursor`. → `{"items": GameSummary[], "next_cursor": string|null, "total": number}` |
-| `GET /api/games/sections` | → `{"featured": [...], "trending": [...], "popular": [...], "new": [...]}` (≤ 24 each) |
-| `GET /api/games/categories` | → `{"categories": [{"slug","name","count"}]}` |
-| `GET /api/games/tags?prefix=&limit=` | → `{"tags": [{"tag","count"}]}` |
-| `GET /api/games/by-ids?ids=1,2,3` | ≤ 200 ids, order preserved, missing omitted → `{"items": GameSummary[]}` |
-| `GET /api/games/:slug` | → `{"game": GameDetail, "related": GameSummary[]}` |
-| `POST /api/games/:slug/play` | anonymous aggregate counter (no user id stored); 1 count per session per game per hour → `204` |
-| `GET /api/thumb/:id` | cached thumbnail bytes from allow-listed source hosts; `Cache-Control: public, max-age=604800` |
+| `GET /api/games?q=&category=&tag=&sort=&mobile=1&exclude=&include_link_out=1&cursor=&limit=` | `q` ≤ 100 chars (the last word is a prefix from 3 letters). `sort` ∈ `relevance` (default when `q`), `popular` (default), `trending`, `new`, `featured`, `az`. `mobile=1` = only games that work on touch screens; `exclude=<slug,…>` (≤ 20) leaves out games in any of those categories; link-out entries only with `include_link_out=1`. `limit` 1–100 (default 48). Keyset pagination: an opaque `cursor`, bound to every parameter but `cursor` and `limit`. → `{"items": GameSummary[], "next_cursor": string\|null, "total": number}` |
+| `GET /api/games/sections?mobile=1&exclude=` | → `{"featured": [...], "trending": [...], "popular": [...], "new": [...]}` (≤ 24 each, playable games only; `featured` = admin picks topped up by source quality) |
+| `GET /api/games/categories?include_link_out=1` | → `{"categories": [{"slug","name","count"}]}`: the 14 core categories always (count may be 0), optional ones when used |
+| `GET /api/games/tags?prefix=&limit=` | `prefix` ≤ 40, `limit` 1–100 (default 30) → `{"tags": [{"tag","count"}]}` |
+| `GET /api/games/by-ids?ids=1,2,3` | ≤ 200 ids, order preserved, games no longer visible omitted → `{"items": GameSummary[]}` |
+| `GET /api/games/status` | → `{"listed", "playable", "importing", "sources": [{"id", "name", "last_import": {"status", "finished_at"}|null}]}`: listed games, listed games of playable sources, whether a run of any source is running, and per enabled source its display name and the last finished run's status and time (never error texts or URLs) |
+| `GET /api/games/:slug?mobile=1&exclude=` | → `{"game": GameDetail, "related": GameSummary[]}` (12 related; `mobile`/`exclude` apply to `related`) · `404 not_found` for an unknown, hidden, broken, `ip_risk` or disabled-source game |
+| `POST /api/games/:slug/play` | no body; CSRF rules. Anonymous aggregate counter: `204` whether counted or a duplicate within the hour · `404 not_found`. Dedup key: an HMAC of the session reference (`gnome_auth` or `gnome_sid`), else an HMAC of the client IP (IPv6 as its /64); only the catalog's 16-byte hourly hash is stored, no user id |
+| `GET /api/thumb/:id` | `200` image bytes from the enabled sources' thumbnail hosts (SSRF-safe client, ≤ 2 MiB, the declared type must be an allowed raster type **and** match the file's magic bytes): `Content-Type` = the sniffed type, strong `ETag`, `Cache-Control: public, max-age=<min(604800, the upstream's max-age)>`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; `304` on `If-None-Match` · `404 not_found` (unknown or invisible game, no thumbnail, an OSS thumbnail, a URL the source's policy refuses, an upstream 4xx, or a refused answer: type, sniff, size) · `429 rate_limited` (`thumb` or `thumb_fetch`) · `503 unavailable` + `Retry-After: 60` (upstream 5xx, timeout, network). Cached on disk up to `GNOME_THUMB_CACHE_MB` (`0` = validated pass-through, nothing stored) |
+| `GET`/`HEAD /play-frame/:slug` | The game's **wrapper document** (not under `/api/`): `200 text/html`, `Cache-Control: no-store`, `X-Frame-Options: SAMEORIGIN`, `Content-Security-Policy: default-src 'none'; frame-src <exactly this game's embed origin, or <proxy origin>/oss/<slug>/>; style-src '<hash>'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`, COOP and `Permissions-Policy` like all app HTML. It runs no script and holds one sandboxed `<iframe>` of the game (`referrerpolicy` per source). `404` (HTML under `default-src 'none'; frame-ancestors 'self'`) for an unknown, invisible or link-out game and whenever the frame policy refuses it · `503` while the module is not prepared |
+| `GET /ads.txt` | The `GNOME_ADS_TXT` file: `text/plain; charset=utf-8`, `Cache-Control: public, max-age=3600`, ≤ 64 KiB (larger: `404` and a warning in the log); `404` when unset or missing |
 
 Categories (slugs): `action adventure arcade racing sports puzzle strategy multiplayer simulation idle platformer
 casual horror sandbox` (+ `shooter`, `io`, `card`, `educational`, `music` if sources provide them).
@@ -254,11 +284,30 @@ The server mirrors upstream lists (uBO/ABP filter text) and uBO's redirect resou
 
 ## VPN gateway (public metadata)
 - `GET /api/vpn/locations` →
-  `{"profiles":[{"id","label","country_code","country","city","provider_note","path","status":"up"|"down"|"unknown","checked_at":ms}],"verify_url":"https://am.i.mullvad.net/json"}`
+  `{"profiles":[{"id","label","country_code","country","city","provider_note","path","status":"up"|"down"|"unknown","checked_at":ms,"exit":VpnExit}],"verify_url":string|null,"check_service":string|null}`
   (`checked_at` = time of the last health probe, `null` before the first; `status` as in `/api/health`;
   `country_code` lowercase ISO 3166-1 alpha-2; `provider_note` may be empty). Empty `profiles` without
-  `GNOME_VPN_PROFILES`. `verify_url` is the exit check the VPN page loads *through the proxy path* of a location.
-- Connection itself happens over Wisp at the profile's `path` (see below). Operator setup: `services/vpn/README.md`.
+  `GNOME_VPN_PROFILES`. `verify_url` is `GNOME_VPN_CHECK_URL` or **`null` (the default: no exit checks at all)**; the
+  browser's own optional check (Settings → VPN → "Check this browser's exit", off by default) loads it *through the
+  proxy path* of the location. `check_service` is its host (with `:port` when not the scheme's default), for the
+  wording "<service> reports …".
+- `VpnExit = {"state": "ok"|"failed"|"unchecked"|"off", "ip", "country", "city", "provider_exit": bool|null,
+  "country_match": bool|null, "checked_at": ms|null, "error": "upstream_unreachable"|"connect_failed"|"tls_failed"|"http_status"|"bad_answer"|"timeout"|null,
+  "v6": {"state","ip","error"}|null}` — the **server's own check** of that location's exit, made through the location's
+  HolyWisp (Wisp + TLS + one GET with `User-Agent: exit-check/1`, 15 s deadline) every `GNOME_VPN_CHECK_INTERVAL_MIN`
+  ± 20 % and on request. `state` is `off` for every profile while checks are off. `provider_exit` copies the service's
+  `mullvad_exit_ip`-style boolean when it sends one; `country_match` compares the answer with the profile's country.
+  `v6` is the same check against `GNOME_VPN_CHECK_URL_V6` (`null` when unset). A failed check is information only: it
+  never changes routing or the health `status`.
+- **Access gate**: the exit details are shown only to clients the access policy lets use the proxy (anyone in `open`
+  mode, a valid anonymous session in `code` mode, a signed-in user in `accounts` mode; no cookie is issued). Everyone
+  else gets `exit` = `{"state": "unchecked"}` with every other field `null`, so egress addresses stay private.
+- `POST /api/vpn/locations/:id/check` (CSRF rules; `vpn_check` rate class; **exists only when checks are on**, else
+  `404`) → `200 {"exit": VpnExit}` once the check finished (≤ 20 s, ≤ 35 s with an IPv6 name; a check of that location
+  younger than 60 s is answered without a new one; a running one is joined) · `401 access_code_required` /
+  `401 login_required` (as `POST /api/wisp/ticket`) · `404 not_found` (unknown id) · `429 rate_limited`.
+- Connection itself happens over Wisp at the profile's `path` with a ticket minted for that profile (see "Wisp
+  tickets" above and "Wisp" below). Operator setup: `services/vpn/README.md`.
 
 ## Wisp (WebSocket) [proxy origin]
 - `GET /wisp/?t=<ticket>&/` (Upgrade: websocket) → direct egress via the primary HolyWisp instance.
@@ -307,6 +356,12 @@ connection whose user session was revoked or expired (sign-out, password change,
 logs stream destinations (the access log records `/wisp/` without the query).
 
 ## Static & SPA
+- App-origin HTML (the shell, `/play-frame/<slug>`, error pages) → `Cross-Origin-Opener-Policy: same-origin` and a
+  deny-list `Permissions-Policy` (camera, microphone, geolocation, payment, USB, serial, HID, MIDI, display
+  capture, wake lock, idle detection, WebAuthn and other credentials, XR, local fonts, window management; fullscreen,
+  autoplay, gamepad, clipboard-write and motion sensors are left to the game frames' `allow`). The shell's CSP has
+  `frame-src blob: <proxy origin>` (`'self'` in single-origin mode, where the wrapper `/play-frame/` is also
+  same-origin) and `frame-ancestors 'none'`, plus `X-Frame-Options: DENY`: nothing frames the shell.
 - Hashed assets under `/assets/` → `Cache-Control: public, max-age=31536000, immutable`.
 - `/vendor/**` (third-party engine builds, unmodified) and other unhashed files → `Cache-Control: no-cache` + `ETag`.
 - `/sw.js` → `no-cache`, `Service-Worker-Allowed: /`.
@@ -328,6 +383,15 @@ logs stream destinations (the access log records `/wisp/` without the query).
   `?v=` cache rule and the Wisp ticket read one). `%GNOME_APP_ORIGINS%` in the HTML files under `/engine/` is replaced, when the server indexes them, with the
   app origins allowed to frame the engine host (space-separated, HTML-attribute-escaped; single-origin mode:
   `GNOME_PUBLIC_ORIGINS`, or without it the origin of each request); their `.br`/`.gz` siblings are not served.
+- Proxy origin, open-source games: `GET`/`HEAD /oss/<slug>/<path>` from `<GNOME_OSS_GAMES_DIR>/<slug>/` (two-origin mode
+  only; a plain 404 on the app origin). Only reviewed, enabled builds; paths with `.`/`..`/dot segments, backslashes,
+  NUL, symbolic links or directories answer 404. The manifest's `entry` file is the only HTML served, and only when
+  the request says `Sec-Fetch-Dest: iframe` (or `frame`): a top-level load answers 404. Other `.html`/`.htm`/`.xhtml`/
+  `.xht`/`.xml` files answer 404. Policies: the entry gets `default-src 'self' data: blob: 'unsafe-inline'
+  'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'; form-action 'self'; frame-ancestors <app origins>` (+
+  `; sandbox allow-scripts[ allow-pointer-lock]` for `isolated` entries), scripts the proxy script policy, everything
+  else the inert policy; `nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: public, max-age=3600`, an `ETag`
+  (strong from the build's file index), `Accept-Ranges: none`.
   Content-Security-Policy of the proxy origin (exact strings: `frontend/src/shared/proxy-origin.ts`):
   - engine-host documents: `engineHostCsp(<app origins>)` = `frame-ancestors <app origins>; default-src 'self' data:
     blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' data: blob:; form-action 'self'` (single-origin
@@ -375,10 +439,11 @@ before the token is checked, so guesses cannot be hidden behind ignored `429`s.
 | Endpoint | |
 | --- | --- |
 | `GET /admin/` | Minimal HTML diagnostics page (`?refresh=<s>`: reload every 2–3600 s); `GET /` and `GET /admin` redirect here (`303`) |
-| `GET /admin/diagnostics` | `{"uptime_s","rss_bytes","http":{"requests","rate_limited","by_status","in_flight","connections_active","connections_total","rate_limited_by_class"},"ws":{"active","total","bytes_up","bytes_down","zero_copy","zero_copy_unavailable","relays":{"zero_copy","copy"},"clients","sessions","limits":{"per_ip","per_session"},"rejected":{"<reason>":n},"probes":{"valid","rejected","upstream_down"}},"fd_limit":{"soft","hard","open","startup":{"before_soft","before_hard","soft","hard","raised","error"}|null},"db":{"size_bytes","users","user_sessions","schema_versions"},"catalog":{"games","by_source","last_import"},"filters":[{"id","category","default_enabled","available","size","size_br","size_gzip","sha256","version","expires_s","updated_at","fetched_at","next_check_at","source","failures","last_error","last_error_at"}],"upstreams":[{"id","addr","status","latency_ms","checked_at","error"}],"proxy":{"isolated","mode","origin","app_origins","listener","explanation"},"jobs":[{"name","every_s","runs","failures","running","last_started_at","last_duration_ms","last_error"}],"rate_limiter":{"enabled","scale","buckets","login_backoff_entries"},"static":{"available","files","bytes","bytes_in_memory","precompressed","has_index_html"},"modules":[...],"config":{...},"build":{"version","target","profile"}}` — keys of modules that are not running are present with zero/empty values; `fd_limit` is `RLIMIT_NOFILE` now (`null` = unlimited) and what startup did (`startup` is `null` when the server was not started by `gnome-server serve`); `ws.probes.upstream_down` counts the probes answered `503 wisp_upstream_unavailable`; `config` is the effective configuration without secrets (`access_mode`, `registration`, `accounts`, `csp`, `hsts`, `public_origins`, `proxy_origin`, `proxy_bind`, `proxy_csp` (whether `GNOME_PROXY_CSP` is set), `allow_custom_wisp`, `static_reload`, `filters_refresh_hours`, `filter_lists_file`, `wisp_upstream`, `wisp_ticket_ttl_s`, `max_ws_per_ip`, `max_ws_per_session`, `vpn_profiles`, `trusted_proxies`, `admin_token` (whether one is set), `log_ips`) |
+| `GET /admin/diagnostics` | `{"uptime_s","rss_bytes","http":{"requests","rate_limited","by_status","in_flight","connections_active","connections_total","rate_limited_by_class"},"ws":{"active","total","bytes_up","bytes_down","zero_copy","zero_copy_unavailable","relays":{"zero_copy","copy"},"clients","sessions","limits":{"per_ip","per_session"},"rejected":{"<reason>":n},"probes":{"valid","rejected","upstream_down"}},"fd_limit":{"soft","hard","open","startup":{"before_soft","before_hard","soft","hard","raised","error"}|null},"db":{"size_bytes","users","user_sessions","schema_versions"},"catalog":{"games","by_source","last_import"},"filters":[{"id","source_kind","category","default_enabled","available","size","size_br","size_gzip","sha256","version","expires_s","updated_at","fetched_at","next_check_at","source","failures","last_error","last_error_at"}],"upstreams":[{"id","addr","status","latency_ms","checked_at","error"}],"proxy":{"isolated","mode","origin","app_origins","listener","explanation"},"jobs":[{"name","every_s","runs","failures","running","last_started_at","last_duration_ms","last_error"}],"rate_limiter":{"enabled","scale","buckets","login_backoff_entries"},"static":{"available","files","bytes","bytes_in_memory","precompressed","has_index_html"},"modules":[...],"config":{...},"build":{"version","target","profile"}}` — keys of modules that are not running are present with zero/empty values; `fd_limit` is `RLIMIT_NOFILE` now (`null` = unlimited) and what startup did (`startup` is `null` when the server was not started by `gnome-server serve`); `ws.probes.upstream_down` counts the probes answered `503 wisp_upstream_unavailable`; `config` is the effective configuration without secrets (`access_mode`, `registration`, `accounts`, `csp`, `hsts`, `public_origins`, `proxy_origin`, `proxy_bind`, `proxy_csp` (whether `GNOME_PROXY_CSP` is set), `allow_custom_wisp`, `static_reload`, `filters_refresh_hours`, `filter_lists_file`, `wisp_upstream`, `wisp_ticket_ttl_s`, `max_ws_per_ip`, `max_ws_per_session`, `vpn_profiles`, `trusted_proxies`, `admin_token` (whether one is set), `log_ips`); `filters[].source_kind` is `"file"` for lists read from a local file (GNOME_FILTER_LISTS_FILE `file =`) and `"url"` otherwise; for file lists `source` is `"file"` and `last_error` is one of file-missing, file-forbidden-path, file-not-regular, file-unreadable, file-too-large, file-timeout, file-not-utf8, file-no-header, file-not-a-list, file-not-resources. The jobs list also shows `filters.files` (every 600 s, first run at start) |
 | `GET /admin/metrics` | Prometheus text format; among others `gnome_ws_probes_total{result="valid"\|"rejected"\|"upstream_down"}` (ticket probes by answer; `upstream_down` = the `503 wisp_upstream_unavailable` answers) and `gnome_wisp_upstream_up{id}` |
 | `POST /admin/filters/refresh` | check every filter list upstream now (conditional GETs), in the background → `202 {"job":"filters.refresh","lists":n}`; results appear in `/admin/diagnostics` `filters` |
-| `POST /admin/catalog/import` | Wave C (catalog module; `404` in this build): `{"sources"?: string[], "limit"?: number}` → `202 {"job_id"}` |
-| `GET /admin/catalog/imports` | Wave C: recent import runs |
-| `POST /admin/games/:id/feature` | Wave C: `{"featured": bool}` |
-| `POST /admin/games/:id/status` | Wave C: `{"status": "active"|"hidden"|"broken"|null}` (`active` also overrides an `ip_risk` match; `null` clears the override) |
+| `POST /admin/catalog/import` | `{"sources"?: string[], "limit"?: number}` (default: every enabled source; `limit` 1–100000 makes the run limited, never complete) → `202 {"job": "catalog.import", "sources": [ids]}` (runs in the background, one source after another; the frame policy is refreshed afterwards) · `409 conflict` "an import of <id> is already running" · `422 validation_failed` with `fields.sources` ("unknown source x", "x is not enabled") or `fields.limit` |
+| `GET /admin/catalog/imports?source=&limit=` | `limit` 1–500 (default 50) → `200 {"runs": ImportRun[]}` (newest first) |
+| `POST /admin/catalog/oss-fetch` | `{"slugs"?: string[]}` (default: every enabled entry whose build is missing or at another commit) → `202 {"job": "catalog.oss-fetch", "slugs": [...]}` · `409 conflict` while one runs · `422` `fields.slugs` ("unknown entry", "not enabled", "not pinned to a commit", "a local build") |
+| `POST /admin/games/:id/feature` | `{"featured": bool}` → `204` · `404 not_found` |
+| `POST /admin/games/:id/status` | `{"status": "active"\|"hidden"\|"broken"\|null}` (`active` also overrides an `ip_risk` match; `null` clears the override) → `204` · `404` · `422` `fields.status` |

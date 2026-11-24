@@ -164,7 +164,7 @@ export function createDefaultSettings(): Settings {
       preferredLocation: null,
       autoConnect: false,
       killSwitch: true,
-      verifyExit: true,
+      verifyExit: false, // the check service is the operator's choice (docs/WAVE-C.md D15)
     },
     games: {
       view: 'grid',

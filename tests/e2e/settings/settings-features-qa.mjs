@@ -6,7 +6,7 @@
  * - filter lists from GET /api/filters: grouped, each with its license; only deviations from a list's default are
  *   stored; a missing endpoint (404) and a server still loading its lists (503 + Retry-After) degrade honestly;
  * - VPN locations from GET /api/vpn/locations (status and checked time), or the "no gateway" state; the custom Wisp
- *   server editor accepts ws/wss only, and the VPN row warns when custom servers bypass the gateway;
+ *   server editor accepts ws/wss only, and the VPN row says custom servers are not used while the VPN is on;
  * - the games categories row degrades when the server has no catalog.
  *
  *   cd frontend && GNOME_DEV_BACKEND=http://127.0.0.1:21400 npx vite --port 21410
@@ -90,32 +90,44 @@ try {
   } else {
     check(/does not publish|publishes no/.test(text), 'filter lists: degrades when the server has none');
   }
-  // Missing endpoint (older server), then a server still verifying its stored lists.
-  injected++;
-  await page.route('**/api/filters', (r) =>
-    r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 'not_found', message: 'not found' } }) }),
-  );
-  await section('vpn');
-  await section('extensions');
-  check(/does not publish filter lists yet/.test(await listRow.innerText()), 'filter lists: 404 says the server does not publish lists yet');
-  await page.unroute('**/api/filters');
-  let calls = 0;
-  injected++;
-  await page.route('**/api/filters', (r) => {
-    calls++;
-    if (calls > 1) return r.continue();
-    return r.fulfill({
-      status: 503,
-      headers: { 'Retry-After': '1' },
-      contentType: 'application/json',
-      body: JSON.stringify({ error: { code: 'unavailable', message: 'filter lists are still loading', retry_after_s: 1 } }),
+  // Missing endpoint (older server), then a server still verifying its stored lists. The listing is kept in
+  // IndexedDB and a stored one survives a 404 or 503 (WAVE-B3 §7.1), so each case runs in a fresh context with no
+  // stored listing and the answer injected before the first request.
+  const fresh = async (handler) => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage();
+    const errors = [];
+    p.on('pageerror', (e) => errors.push(e.message));
+    await p.route('**/api/filters', handler);
+    await p.goto(`${BASE}/settings/extensions`, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(1200);
+    return { ctx, p, errors, text: () => p.locator('[data-row="extensions.lists"]').innerText() };
+  };
+  {
+    const f = await fresh((r) =>
+      r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 'not_found', message: 'not found' } }) }),
+    );
+    check(/does not publish filter lists/.test(await f.text()) && !f.errors.length, 'filter lists: 404 says the server does not publish lists');
+    await f.ctx.close();
+  }
+  {
+    let calls = 0;
+    const f = await fresh((r) => {
+      calls++;
+      if (calls > 1) return r.continue();
+      return r.fulfill({
+        status: 503,
+        headers: { 'Retry-After': '1' },
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'unavailable', message: 'filter lists are still loading', retry_after_s: 1 } }),
+      });
     });
-  });
-  await section('vpn');
-  await section('extensions');
-  await page.waitForTimeout(2000);
-  check(calls === 2 && !/could not be loaded/.test(await listRow.innerText()), `filter lists: 503 + Retry-After is retried (${calls} requests)`);
-  await page.unroute('**/api/filters');
+    await f.p.waitForTimeout(2000);
+    const t = await f.text();
+    const listed = !served?.lists?.length || served.lists.every((l) => t.includes(l.name));
+    check(calls === 2 && listed && !/could not be loaded/.test(t) && !f.errors.length, `filter lists: 503 + Retry-After is retried (${calls} requests)`);
+    await f.ctx.close();
+  }
 
   // VPN locations against GET /api/vpn/locations.
   await section('vpn');
@@ -129,24 +141,29 @@ try {
       vpn.profiles.every((p) => options.some((o) => o.startsWith(p.label))) && options.some((o) => /checked/.test(o)),
       `vpn: every location with its status (${options.map((o) => o.split('\n')[0]).join(', ')})`,
     );
-    check(await row('vpn.mode').getByRole('radio', { name: 'Gateway' }).isEnabled(), 'vpn: gateway mode can be chosen');
+    check(await row('vpn.mode').getByRole('radio', { name: 'On' }).isEnabled(), 'vpn: the VPN can be turned on');
   } else {
     check(/no VPN gateway configured/.test(await row('vpn.mode').innerText()), 'vpn: says the server has no gateway');
   }
 
-  // Custom Wisp servers: ws/wss only; the VPN row warns that they bypass the gateway.
+  // Custom Wisp servers: ws/wss only when the operator allows them (GNOME_ALLOW_CUSTOM_WISP), else an honest note;
+  // the VPN row says they are not used while the VPN is on (WAVE-C §10).
   await section('advanced');
   const wisp = row('advanced.wispServers');
-  await wisp.getByRole('textbox').fill('https://not-a-websocket.example/');
-  await wisp.getByRole('button', { name: 'Add server' }).click();
-  check(await wisp.getByText('Use a ws:// or wss:// address.').isVisible(), 'wisp servers: https:// is rejected');
-  await wisp.getByRole('textbox').fill('wss://wisp.example.com/');
-  await wisp.getByRole('button', { name: 'Add server' }).click();
-  check(await wisp.getByText('wss://wisp.example.com/').isVisible(), 'wisp servers: wss:// is accepted');
-  await section('vpn');
-  check(/bypass the gateway/.test(await row('vpn.mode').innerText()), 'vpn: warns that custom Wisp servers bypass the gateway');
-  await section('advanced');
-  await wisp.getByRole('button', { name: /Remove/ }).first().click();
+  if (/does not allow custom Wisp servers/.test(await wisp.innerText())) {
+    check(!(await wisp.getByRole('textbox').count()), 'wisp servers: not allowed by this server, no editor shown');
+  } else {
+    await wisp.getByRole('textbox').fill('https://not-a-websocket.example/');
+    await wisp.getByRole('button', { name: 'Add server' }).click();
+    check(await wisp.getByText('Use a ws:// or wss:// address.').isVisible(), 'wisp servers: https:// is rejected');
+    await wisp.getByRole('textbox').fill('wss://wisp.example.com/');
+    await wisp.getByRole('button', { name: 'Add server' }).click();
+    check(await wisp.getByText('wss://wisp.example.com/').isVisible(), 'wisp servers: wss:// is accepted');
+    await section('vpn');
+    check(/Custom Wisp servers are not used while the VPN is on/.test(await row('vpn.mode').innerText()), 'vpn: says custom Wisp servers are not used while the VPN is on');
+    await section('advanced');
+    await wisp.getByRole('button', { name: /Remove/ }).first().click();
+  }
 
   // Games: hidden categories from GET /api/games/categories, or an honest message.
   await section('games');

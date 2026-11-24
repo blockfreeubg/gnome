@@ -152,7 +152,8 @@ describe('searchSettings', () => {
   it('finds rows by keyword and description', () => {
     expect(ids('dark mode')[0]).toBe('appearance.theme');
     expect(ids('utm')).toContain('privacy.stripTrackingParams');
-    expect(ids('mullvad')).toContain('vpn.mode');
+    expect(ids('wireguard')).toContain('vpn.mode');
+    expect(ids('mullvad')).not.toContain('vpn.mode'); // no provider name (WAVE-C §10)
   });
 
   it('requires every term to match', () => {

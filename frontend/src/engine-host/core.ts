@@ -32,7 +32,7 @@ import type { TransportManager } from '../shared/transport';
 import type { Blocker, BlockerHostContext } from '../extensions/host/blocker';
 import { UvContextSender } from '../extensions/host/uv-context';
 import { Announcements, BlockedCounts, WsMarks } from './blocked';
-import { BUILD, ENGINE_TEST, SELF_CHECK, TEST_CAPABILITIES, VERSIONS } from './build-info';
+import { BUILD, ENGINE_TEST, SELF_CHECK, VERSIONS } from './build-info';
 import { newCounters } from './context';
 import type { HostContext } from './context';
 import { DownloadTracker } from './downloads';
@@ -71,16 +71,11 @@ export interface EngineHostDeps {
  * (ENGINE-PROTOCOL §4; tests/e2e/engine/suites/host-capabilities.mjs, Chromium 156 + Firefox 157, 2026-11-12).
  * `saveLink`/`saveImage` since integration part 2: Firefox refused the engine host's blob download because it checks
  * it against the APP's frame-src as a navigation of the engine iframe; with `blob:` there (gnome-server's shell
- * policy) it saves the file in both browsers (`capability:saveLink + saveImage`). Not offered: `blocker` (Wave B step 3).
+ * policy) it saves the file in both browsers (`capability:saveLink + saveImage`). `blocker` since the Wave B step 3
+ * integration (WAVE-B3 §12.4 matrix, 2026-11-21).
  */
-export const OFFERED_CAPABILITIES: readonly Capability[] = ['zoom', 'print', 'selectAll', 'saveLink', 'saveImage', 'cookies', 'siteData', 'suggest', 'vpnVerify'];
+export const OFFERED_CAPABILITIES: readonly Capability[] = ['zoom', 'print', 'selectAll', 'saveLink', 'saveImage', 'cookies', 'siteData', 'suggest', 'vpnVerify', 'blocker'];
 
-/**
- * What this build offers: OFFERED_CAPABILITIES plus, in e2e builds only, the build's `GNOME_ENGINE_TEST_CAPABILITIES`
- * (WAVE-B3 D19: `blocker` before the integration step offers it). Reported in InitResult.capabilities and
- * diagnostics; `test.offer` only widens the command gate.
- */
-export const BUILD_CAPABILITIES: readonly Capability[] = [...new Set([...OFFERED_CAPABILITIES, ...TEST_CAPABILITIES])];
 
 // The per-browser enforcement table and browserFamily() are in the contract (shared/site-rules.ts), so the app applies
 // the same table to what this engine host reports.
@@ -235,7 +230,7 @@ export class EngineHostRuntime {
     this.#server = new ProtocolServer(init.port, {
       handlers: this.#handlers(),
       testHandlers: ENGINE_TEST ? this.#testHandlers() : null,
-      capabilities: () => (this.#testOffered.length ? [...new Set([...BUILD_CAPABILITIES, ...this.#testOffered])] : BUILD_CAPABILITIES),
+      capabilities: () => (this.#testOffered.length ? [...new Set([...OFFERED_CAPABILITIES, ...this.#testOffered])] : OFFERED_CAPABILITIES),
       selfCheck: SELF_CHECK,
       onInternalError: (m) => console.error(`[gnome engine host] ${m}`),
     });
@@ -344,7 +339,7 @@ export class EngineHostRuntime {
     this.#guardHostRealm();
     // The content blocker exists only where `blocker` is offered (WAVE-B3 D19); otherwise ALLOW_ALL stays and the
     // snapshot's lists are ignored.
-    if (BUILD_CAPABILITIES.includes('blocker') && this.#createBlocker) {
+    if (OFFERED_CAPABILITIES.includes('blocker') && this.#createBlocker) {
       const tabs = this.#tabs;
       try {
         this.#blocker = this.#createBlocker({
@@ -369,6 +364,8 @@ export class EngineHostRuntime {
     }
     engineHooks().configure({ privacy: p.settings.privacy, extensions: p.settings.extensions });
     onEngineHooksChange((h) => {
+      // A block mark of the old hooks must not keep blocking a socket the new hooks allow (and the reverse).
+      this.#wsMarks.clear();
       if (this.#settings) h.configure({ privacy: this.#settings.privacy, extensions: this.#settings.extensions });
       this.#queueStatus();
     });
@@ -439,7 +436,7 @@ export class EngineHostRuntime {
       instance: this.#instance,
       status: this.#status(),
       versions: VERSIONS,
-      capabilities: [...BUILD_CAPABILITIES],
+      capabilities: [...OFFERED_CAPABILITIES],
       enforcedPermissions: [...this.#enforced],
       timings: {
         swReadyMs: fitInt(swReadyMs, 0, LIMITS.maxDurationMs),
@@ -641,7 +638,7 @@ export class EngineHostRuntime {
       uptimeMs: Math.max(0, Math.round(performance.now() - this.#startedAt)),
       status: this.#status(),
       versions: VERSIONS,
-      capabilities: [...BUILD_CAPABILITIES],
+      capabilities: [...OFFERED_CAPABILITIES],
       enforcedPermissions: [...this.#enforced],
       tabs: this.#tabs?.liveCounts() ?? { live: 0, scramjet: 0, ultraviolet: 0 },
       sw: { starts: sw.starts, held: Math.max(sw.held, this.#counters.sw.held), unavailable: Math.max(sw.unavailable, this.#counters.sw.unavailable) },

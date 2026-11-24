@@ -346,8 +346,13 @@ export type HostToSwMessage =
    * that started; `navs` = proxied URLs a UV tab's top document is about to load (judged as main_frame); `drop` =
    * announced navs that were cancelled; `reset` = forget what this engine host sent before (sent after sw-hello, with
    * everything it knows, split into one `reset: true` message and as many `reset: false` messages as the limits need).
+   * `inits` (optional, absent = []): [proxied URL, initiator] of loads and fetches the engine host itself starts in
+   * Ultraviolet: '' for GNOME's own navigations (address bar, bookmark, history, reload, back/forward, restore: no
+   * initiator, like a browser's), the opener's real URL for a tab a page asked for (tab.create start.opener), the
+   * page's real URL for a fetch the engine host makes for a page (its favicon, a download it started). One-shot per
+   * URL, forgotten after 30 s. The SW uses them only for SameSite and fetch metadata (lane x3's SameSite glue).
    */
-  | { type: 'gnome-blocker-context'; docs: Array<[string, string]>; navs: string[]; drop: string[]; reset: boolean };
+  | { type: 'gnome-blocker-context'; docs: Array<[string, string]>; navs: string[]; drop: string[]; inits?: Array<[string, string]>; reset: boolean };
 
 export const BLOCKER_CONTEXT_LIMITS = { docs: 512, navs: 64, urlLength: 8192 } as const;
 /** Per message: at most one engine per group, 64 MiB each, 128 MiB in all. */
@@ -456,7 +461,14 @@ export function parseHostToSw(data: unknown): HostToSwMessage | null {
       pairs.push([d[0], d[1]]);
     }
     if (!(navs as unknown[]).every(url) || !(drop as unknown[]).every(url)) return null;
-    return { type: 'gnome-blocker-context', docs: pairs, navs: [...(navs as string[])], drop: [...(drop as string[])], reset };
+    const inits = data.inits === undefined ? [] : data.inits;
+    if (!Array.isArray(inits) || inits.length > BLOCKER_CONTEXT_LIMITS.navs) return null;
+    const initPairs: Array<[string, string]> = [];
+    for (const i of inits as unknown[]) {
+      if (!Array.isArray(i) || i.length !== 2 || !url(i[0]) || !(i[1] === '' || url(i[1]))) return null;
+      initPairs.push([i[0], i[1]]);
+    }
+    return { type: 'gnome-blocker-context', docs: pairs, navs: [...(navs as string[])], drop: [...(drop as string[])], inits: initPairs, reset };
   }
   return data.type === 'gnome-claim' || data.type === 'gnome-skip-waiting' || data.type === 'gnome-hello'
     ? { type: data.type }

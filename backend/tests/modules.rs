@@ -94,7 +94,7 @@ async fn a_module_plugs_into_every_hook() {
     let app = TestApp::with_modules(&[], |_| {}, with_probe).await;
     assert_eq!(
         app.state.modules().iter().map(|m| m.name()).collect::<Vec<_>>(),
-        ["core", "accounts", "wisp", "vpn", "filters", "probe"]
+        ["core", "accounts", "wisp", "vpn", "filters", "games", "probe"]
     );
 
     // Public route, with the API middleware applied; the state is reachable from AppState as well.
@@ -113,7 +113,7 @@ async fn a_module_plugs_into_every_hook() {
     assert_eq!(app.send(get("/api/health")).await.json()["wisp"]["direct"], "up");
     let d = app.send_admin(admin_get("/admin/diagnostics")).await.json();
     assert_eq!(d["probe"], json!({"hits": 1}));
-    assert_eq!(d["modules"], json!(["core", "accounts", "wisp", "vpn", "filters", "probe"]));
+    assert_eq!(d["modules"], json!(["core", "accounts", "wisp", "vpn", "filters", "games", "probe"]));
     assert!(app.send_admin(admin_get("/admin/metrics")).await.text().contains("gnome_probe_hits 1\n"));
 
     // The job is registered with the server's jobs and sees the same state.

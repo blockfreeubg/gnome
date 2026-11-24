@@ -52,7 +52,10 @@ HTTPS sites.
 gnome/
 ├── Cargo.toml              # workspace: backend, crates/* (Rust is used for the backend only)
 ├── backend/src/            # main.rs (CLI), config, state, db, error, security/, auth/, api/, gateway/,
-│                           # static_files, filters/, vpn/, admin/, metrics
+│                           # static_files, filters/, games/, vpn/, admin/, metrics
+│                           # games/: admin, ads_txt, cli, fetcher, frames (FramePolicy + /play-frame), jobs, oss
+│                           # (fetch + /oss/**), replay (--replay), routes, thumbs (/api/thumb + disk cache)
+│                           # vpn/: profiles, exit (ExitChecker), wisp_client (Wisp v1 + rustls for the check)
 ├── crates/catalog/src/     # config, store, import, query (search, listings), sources/{gamepix,gamedistribution,playgama,...}, categories, dedup, blocklist
 ├── crates/net/src/         # client (SafeClient), ip_policy, resolver, error
 ├── database/migrations/    # 0001_core.sql (core), 0100_catalog.sql (catalog crate; its 0101 index migration lives in crates/catalog/migrations/)
@@ -77,10 +80,18 @@ gnome/
 │       ├── engine-host/    # proxy origin only: core (protocol server, tabs, engines, fallback, per-document observers),
 │       │                   # transport/ (transport manager), sw-client/ (SW registration, updates, signals)
 │       ├── sw/             # the service worker → dist/sw.js (classic script, scope /)
-│       ├── extensions/     # Wave B step 3: content-blocking runtime behind src/shared/engine-hooks.ts
+│       ├── extensions/     # Wave B step 3: content-blocking runtime behind src/shared/engine-hooks.ts:
+│       │                   # core/ (policy, composite, sanitizer, selectors; pure), filters/ (lists, engines, cache,
+│       │                   # network provider), worker/ (builder Worker), cosmetic/, cookies/, privacy/ (providers),
+│       │                   # host/ (engine-host composition root, UV context), sw/ (SW half), app/ (listing, key,
+│       │                   # exposure budget, shield, stats; app/ui/ the cookie manager and editors)
 │       ├── pages/          # home/ browser/ games/ extensions/ vpn/ history/ bookmarks/ downloads/ settings/ about/
-│       ├── games/          # api.ts, store.ts, components/
-│       └── vpn/            # gateway.ts, verify.ts, store.ts
+│       ├── games/          # api.ts, types.ts, catalog.svelte.ts, library.svelte.ts (favorites, recently played),
+│       │                   # player.ts, networks.ts (D24 notice choices), channel.ts, copy.ts, feature.svelte.ts,
+│       │                   # start.ts, summary.ts, components/ (GameShelf, GameTile, GameThumb, LicensePanel),
+│       │                   # testing/fake-api.ts; pages/games/ GamesPage, GameDetailPage, PlayPage
+│       └── vpn/            # api.ts, types.ts, state.svelte.ts (vpnState), wire.svelte.ts, start.ts, app-deps.ts,
+│                           # copy.ts, testing/; pages/vpn/ VpnPage.svelte, browser-check.svelte.ts
 ├── services/holywisp/      # VERSION (pinned commit), fetch-build.sh, gnome.conf, holywisp.service
 ├── services/vpn/           # gateway examples (gluetun/wireproxy), profiles.example.toml
 ├── scripts/                # dev.sh, build.sh, release.sh, bench.sh, check.sh
@@ -151,8 +162,12 @@ splices get a 10 s grace period).
 
 CLI (`gnome-server <cmd>`): `serve` (default) · `migrate` · `filters refresh [<id>…]` · `filters status` ·
 `user create <name> [--admin] [--password-stdin]` · `user reset-password <name> [--password-stdin]` · `config check`
-(prints effective config with secrets redacted) · `version`. Planned with the catalog module (Wave C):
-`catalog import [--source …] [--limit N]` · `catalog stats`.
+(prints effective config with secrets redacted) · `version` · `catalog import [--source S]… [--limit N]
+[--replay <index.json>]` (one JSON report per run; exit 1 when a run failed or was busy, 2 for an unknown or disabled
+source or a bad replay index; `--replay` answers the importers from captured responses and never contacts a host:
+development and tests only) · `catalog stats` · `catalog fetch-oss [--slug S]…` (one JSON line per entry; exit 1 if
+one failed). The `catalog` commands run the modules' start-up hook first (`Module::prepare`, D21) and need the same
+binds as the server (the `oss` source counts as disabled without a proxy origin).
 
 ### 4.2 Configuration (environment; optional `GNOME_CONFIG=/path/gnome.toml`, env wins)
 | Variable | Default | Meaning |
@@ -179,10 +194,14 @@ CLI (`gnome-server <cmd>`): `serve` (default) · `migrate` · `filters refresh [
 | `GNOME_COOKIE_SECURE` | `auto` | `auto` (secure when HTTPS is seen, and on plain HTTP when the request's app origin is a loopback one such as `http://127.0.0.1:8080` or `http://localhost:5173`, which browsers treat as trustworthy for `Secure` cookies) · `true` · `false`. Secure cookies use `__Host-` names |
 | `GNOME_WISP_UPSTREAM` | `127.0.0.1:6001` | Primary HolyWisp address (`host:port`; internal addresses only: loopback, private, CGNAT, link-local, never a cloud-metadata address such as `169.254.169.254`, `fd00:ec2::254` or `100.100.100.200`; DNS names are filtered to such answers; `localhost` refused) |
 | `GNOME_VPN_PROFILES` | – | Path to the egress gateway profiles TOML (§7; format in `services/vpn/profiles.example.toml`) |
+| `GNOME_VPN_CHECK_URL` | empty | The operator's exit check service (HTTPS, JSON with `ip`, `country`, `city`; examples in `services/vpn/README.md`). **Empty = no exit checks at all**: no server-side checks, `verify_url: null`, no browser-side check (D15) |
+| `GNOME_VPN_CHECK_URL_V6` | empty | The same service under an IPv6-only name; empty = IPv6 exits are not checked |
+| `GNOME_VPN_CHECK_INTERVAL_MIN` | `15` | Minutes between server-side checks of each location (± 20 %; 0–1440; `0` = on request only) |
+| `GNOME_VPN_EGRESS_SHARED_OK` | `false` | `true` = the operator states that the VPN egress's terms allow every person who can use this instance; silences D16's start-up and `config check` warning |
 | `GNOME_SOURCE_URL` | – | Link to corresponding source (AGPL §13 offer) shown in About |
 | `GNOME_ENGINES` | `scramjet,ultraviolet` | Proxy engines the SPA may use (`/api/config` → `engines`) |
 | `GNOME_ENGINE_DEFAULT` | `scramjet` | Default engine (must be listed in `GNOME_ENGINES`) |
-| `GNOME_CATALOG_REFRESH_HOURS` | `24` (0 = off) | Periodic catalog import |
+| `GNOME_CATALOG_REFRESH_HOURS` | `24` | Hours between imports of each source (`catalog.import`, first tick 30 s after start); `0` = only on request (CLI or admin; the local `oss` source is still scanned on the first tick) |
 | `GNOME_CATALOG_SOURCES` | `gamepix,oss` | Enabled importers (ids defined by `gnome-catalog`: `gamepix`, `gamedistribution`, `playgama`, `gamemonetize`, `famobi`, `itchio`, `js13k`, `oss`; `none` = no catalog; GameDistribution, Playgama, GameMonetize and Famobi also need their publisher/affiliate ID configured, §6) |
 | `GNOME_GAMEPIX_SID` | `1` | GamePix publisher SID (`1` = the public default SID) |
 | `GNOME_GD_PUBLISHER_ID` / `GNOME_PLAYGAMA_CLID` / `GNOME_FAMOBI_AFFILIATE_ID` | – | The operator's publisher/affiliate IDs; each is required to enable its source (GameDistribution, Playgama, Famobi) |
@@ -192,11 +211,15 @@ CLI (`gnome-server <cmd>`): `serve` (default) · `migrate` · `filters refresh [
 | `GNOME_OSS_MANIFEST` / `GNOME_OSS_GAMES_DIR` / `GNOME_OSS_REQUIRE_BUILDS` | embedded `oss-games.toml` / `$GNOME_DATA_DIR/oss-games` / `true` | Curated open-source games: another manifest file; where built games live (`<dir>/<slug>/<entry>`); import only entries whose build exists |
 | `GNOME_CATALOG_BLOCKLIST` / `GNOME_CATALOG_BLOCKLIST_FILE` | – | Extra trademark/knock-off terms, comma-separated (`!term` removes a default) / a file with one term per line (`#` comments, `title:` / `start:` / `label:` scopes) |
 | `GNOME_CATALOG_DEDUP_ORDER` | `playgama,gamepix,gamedistribution,gamemonetize,famobi,oss,itchio,js13k` | Preferred listing when one game is in several sources (unlisted sources are appended in this order) |
+| `GNOME_OSS_FETCH` | `auto` | `auto`: the job `catalog.oss-fetch` downloads every enabled OSS entry's pinned commit from `codeload.github.com` when its build is missing; `manual`: only `gnome-server catalog fetch-oss` |
+| `GNOME_OSS_MAX_MB` | `512` | Disk cap for all OSS builds together, MiB (16–65536) |
+| `GNOME_GAMES_EMBED_HOSTS` | – | Developer hosts the operator approved for game embeds (exact DNS names, comma-separated; D4). Catalog data never adds a host by itself; the admin diagnostics list the `pending` ones |
+| `GNOME_ADS_TXT` | – | Absolute path of a file served as `/ads.txt` on the app origin (`text/plain`, ≤ 64 KiB, re-read on change; D22) |
 | `GNOME_CATALOG_USER_AGENT` | `GNOME-catalog/<version>` | Feed `User-Agent` (printable, ≤ 200 bytes; e.g. `GNOME-catalog/<ver> (+https://<your site>)`) |
 | `GNOME_FILTERS_REFRESH_HOURS` | `24` | Filter lists are re-checked (conditional GET) when their `! Expires` says; lists without one every this many hours; both clamped to 4 h–7 d. `0` = no automatic fetching (only `gnome-server filters refresh` / `POST /admin/filters/refresh`) |
 | `GNOME_FILTER_LISTS_FILE` | – | TOML that overrides, disables (`disabled = true`) or adds filter lists on top of the built-in registry (format: `backend/src/filters/registry.rs`, backend/README.md); validated at startup. A list may come from a local file instead of a URL (`file = "/abs/path"`, also the built-in `ubo-resources`): absolute, no `..`, not under `/proc`, `/sys` or `/dev`; only a regular file, opened without blocking, read within the list's size limit and 10 s, checked like a download, re-read at start, every 10 min (job `filters.files`, also with `GNOME_FILTERS_REFRESH_HOURS=0`) and on every forced refresh; a missing file only makes that list unavailable; `/api/filters` never shows the path |
 | `GNOME_THUMB_PROXY` | `true` | Serve game thumbnails through `/api/thumb/:id` |
-| `GNOME_THUMB_CACHE_MB` | `256` | Disk cap for the thumbnail cache |
+| `GNOME_THUMB_CACHE_MB` | `256` | Disk cap for the thumbnail cache in MiB (LRU); `0` = no disk cache (validated pass-through, nothing stored) |
 | `GNOME_MAX_WS_PER_IP` / `GNOME_MAX_WS_PER_SESSION` | `32` / `16` | Concurrent Wisp connections per client IP (IPv6: per /64) / per session (`session_ref`) |
 | `GNOME_RATE_LIMIT_SCALE` | `1.0` | Multiplies all rate limits (0–1000; `0` disables rate limiting) |
 | `GNOME_ARGON2_MEMORY_KIB` | `19456` | Password hashing cost (Argon2id, t=2, p=1; lower on 1 GB Pi; hashes are upgraded on next login) |
@@ -210,12 +233,9 @@ CLI (`gnome-server <cmd>`): `serve` (default) · `migrate` · `filters refresh [
 
 Settings of modules that are not part of a build are still validated, and `gnome-server config check` labels them
 "no effect"; setting one logs a warning. TOML keys are the variable names without `GNOME_`, lowercased.
-The game catalog is not part of this build's server yet (Wave C): `GNOME_CATALOG_REFRESH_HOURS`,
-`GNOME_CATALOG_SOURCES`, `GNOME_THUMB_PROXY` and `GNOME_THUMB_CACHE_MB` are such "no effect" settings. The source,
-OSS, blocklist, dedup and user-agent rows above are read by the `gnome-catalog` crate itself
-(`CatalogConfig::from_env`, `crates/catalog/README.md` "Configuration"); the server does not know them until the
-catalog module lists them in its settings, so until then a `GNOME_CONFIG` file refuses them as unknown keys and they
-are not shown by `config check`.
+Since Wave C the games module is part of every build: the catalog rows above are server settings (`config.rs`
+`VARS`), so `config check` shows them and a `GNOME_CONFIG` file accepts them; the server hands them to the
+`gnome-catalog` crate. `GNOME_CATALOG_SOURCES=none` turns the catalog off (`/api/config` → `features.games` false).
 
 ### 4.3 Security model
 - **Who can use the proxy**: the `/wisp/` gateway requires a valid **Wisp ticket** (§4.6, minted by the app origin for
@@ -234,8 +254,22 @@ are not shown by `config check`.
 - **CSRF**: `SameSite=Strict` cookies + mandatory `X-GNOME-Request: 1` + Origin check on state-changing requests.
 - **Sessions**: anonymous tokens are HMAC-signed (stateless); user sessions are random tokens stored hashed, revocable.
 - **Admin**: separate loopback listener; optional bearer token; never routed on the public port.
-- **Headers**: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`; app origin: `X-Frame-Options:
-  SAMEORIGIN`, CSP for the shell (`frame-src` = the proxy origin and `blob:` only, `'self'` instead of the proxy origin in single-origin mode), `frame-ancestors 'self'`;
+- **Headers**: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`; app origin: every HTML answer gets
+  `Cross-Origin-Opener-Policy: same-origin` (a popup that escapes a game's sandbox keeps no `window.opener`) and a
+  deny-list `Permissions-Policy` (camera, microphone, geolocation, payment, USB, serial, HID, MIDI, display
+  capture, wake lock, idle detection, credentials, XR, local fonts, window management; fullscreen, autoplay, gamepad,
+  clipboard-write and the motion sensors are left to the game frames' `allow`; Firefox ignores most of the header, so
+  there the frames' `allow` is what limits games); the shell's CSP has the fixed `frame-src blob: <proxy origin>`
+  (`'self'` in single-origin mode; `'self'` also covers the game wrapper) and `frame-ancestors 'none'` with
+  `X-Frame-Options: DENY` (nothing frames the shell); other app answers `X-Frame-Options: SAMEORIGIN` and
+  `frame-ancestors 'self'`. The **game wrapper** `/play-frame/<slug>` (WAVE-C D2) is the only app document that frames
+  third-party content: it runs no script, its own CSP is `default-src 'none'; frame-src <exactly this game's embed
+  origin, or <proxy origin>/oss/<slug>/>; style-src '<hash>'; base-uri 'none'; form-action 'none'; frame-ancestors
+  'self'`, and it holds one sandboxed iframe of the game (`allow-scripts allow-same-origin allow-popups
+  allow-popups-to-escape-sandbox …`, never `allow-top-navigation`). A game may be framed only when its embed host is a
+  fixed host of an enabled source or an operator-approved developer host (`GNOME_GAMES_EMBED_HOSTS`); catalog data
+  never adds a host. Thumbnails (`/api/thumb/:id`) answer with the sniffed image type, `nosniff` and `default-src
+  'none'; frame-ancestors 'none'`;
   proxy origin: no `X-Frame-Options`, and a Content-Security-Policy on **every** response, at least as strict as the
   proxied-document policy (the engine-host policy, the bare-mux worker's two policies, the script policy, the
   `default-src 'none'` policy where nothing runs, the engine-prefix `503` page's, and hyper's own error answers), whose
@@ -282,8 +316,10 @@ Core (`0001_core.sql`): `users`, `user_sessions`, `user_settings`, `bookmarks`, 
 records), `game_categories`, `game_tags`, `games_fts` (FTS5), `game_plays_daily`, `game_play_dedup`,
 `catalog_imports`, `catalog_http_cache` (feed validators), `catalog_facets` (listing counts), `catalog_meta`; migration
 101 (`crates/catalog/migrations/0101_catalog_search_index.sql`) adds the covering index `games_listed_search`. The
-server's migration runner already applies both, although the catalog module itself arrives in Wave C. Filter lists are
-files in
+server's migration runner applies both, and the games module (Wave C) uses these tables as they are: no new migration.
+Thumbnails live as files in `$GNOME_DATA_DIR/thumbs/` (`<2 hex>/<sha256(url)>.<ext>`, the modification time is the
+expiry, LRU-capped by `GNOME_THUMB_CACHE_MB`), OSS builds in `GNOME_OSS_GAMES_DIR` (one directory per slug with a
+`.gnome-oss.json` file index). Filter lists are files in
 `$GNOME_DATA_DIR/filters/` (content-addressed `<id>.<sha256>.txt` / `.json` plus precompressed `.br` and `.gz`; a new
 version is written beside the old one, which is removed once the metadata names the new one) with metadata (SHA-256,
 sizes, upstream validators, version, `! Expires`, schedule, last error) in `kv` (`filters:<id>`).
@@ -342,9 +378,15 @@ but `/admin/diagnostics`, the About page and `config check` report *proxy isolat
   canonical form because libcurl-based transports (both generations) refuse a Wisp URL that does not end in `/`; the
   empty-key pair is ignored, so the same URL works for every transport. The gateway also accepts `?t=<ticket>` and
   `?t=<ticket>/` (it strips exactly one trailing `/` from the raw value; tickets never contain `/`), percent-decodes
-  the value, refuses a second `t`, and never forwards the query to HolyWisp. Ticket = `w1.<exp_s>.<session_ref>.<hmac>`
-  (HMAC-SHA256 with the secret key, domain-separated from session tokens; `session_ref` = a stable, non-secret hash of
-  the anonymous or user session so per-session caps apply). Lifetime: `GNOME_WISP_TICKET_TTL_S` (default 1 h, at most
+  the value, refuses a second `t`, and never forwards the query to HolyWisp. Ticket =
+  `w2.<exp_s>.<iat_s>.<route>.<session_ref>.<hmac>` (HMAC-SHA256 with the secret key, domain-separated from session
+  tokens; `session_ref` = a stable, non-secret hash of the anonymous or user session so per-session caps apply).
+  **Route-bound since Wave C (D23)**: the app mints for the route it chose (`POST /api/wisp/ticket` body
+  `{"route": "default" | {"profile": "<id>"}}`; `route` = `d` or `p<base64url id>`), and the gateway accepts a ticket
+  only on its own path (`401 wisp_ticket_wrong_route`), refuses tickets minted before the process started
+  (`wisp_ticket_stale`) and default-route tickets older than the session's latest profile-route mint
+  (`wisp_ticket_superseded`; the 15 s re-check also closes such open default-route connections). So a page cannot
+  leave a VPN location for the direct route by reusing an older ticket; `w1` tickets are refused. Lifetime: `GNOME_WISP_TICKET_TTL_S` (default 1 h, at most
   7 days), never past the session's expiry. A ticket is a bearer token that proxied pages on the proxy origin can read,
   and in `open`/`code` mode it cannot be revoked, hence the short default. User-session tickets are rejected once that
   session is revoked (cached lookup, ≤ 15 s), and that session's open connections are closed (re-checked every 15 s).
@@ -401,8 +443,17 @@ but `/admin/diagnostics`, the About page and `config check` report *proxy isolat
   (the only queries read there are the Wisp ticket and the filter lists' `?v=` cache rule). Proxied documents and workers get GNOME's proxied-document CSP
   from the engines (§5.4), never from the server. The app's CSP lists only the proxy origin (`'self'` in single-origin mode) and `blob:` in
   `frame-src` and, when isolated, no `ws:`/`wss:` in `connect-src`. Escaped proxied code can navigate the engine iframe
-  itself, and that navigation is checked against the app's `frame-src`: until integration part 2 the list also named
-  nine game-embed hosts, which a hostile page could load natively that way (ENGINE-PROTOCOL §1.1). `blob:` lets the
+  itself, and that navigation is checked against the app's `frame-src`, so the list names no game-embed host: games are
+  framed through the app's own wrapper `/play-frame/<slug>` (covered by `'self'` only in single-origin mode, where the
+  engine host is same-origin anyway), whose own policy names exactly that one game's embed origin (WAVE-C D2, D4).
+  Open-source games under `/oss/<slug>/**` (WAVE-C D5): the manifest's `entry` file is the only HTML served and only
+  to frame loads (`Sec-Fetch-Dest: iframe` or `frame`; a top-level load or any other destination answers 404, so a link
+  to it never runs a game with the proxy origin's first-party storage); every other `.html`/`.htm`/`.xhtml`/`.xht`/
+  `.xml` file of a build answers 404; the entry gets `default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'
+  'wasm-unsafe-eval'; connect-src 'self'; form-action 'self'; frame-ancestors <app origins>` (no `'self'`: a proxied
+  page cannot frame it; `; sandbox allow-scripts` for `isolated` entries), scripts `proxyScriptCsp(appOrigins)`,
+  everything else `proxyInertCsp(appOrigins)`. Non-isolated OSS games share the proxy origin's realm and storage (the
+  reviewed entries only). `blob:` lets the
   engine host's own blob downloads through in Firefox, which checks them against this list (a `blob:` URL belongs to
   the origin that made it, so only proxy-origin blobs, with their creator's strict policy, can load there). The app's `GNOME_PUBLIC_ORIGINS`/same-origin check never accepts
   the proxy origin, so proxied pages cannot make credentialed state-changing API calls (CORS is not enabled on the app
@@ -446,7 +497,12 @@ When signed in with sync enabled, `settings/sync.ts` mirrors settings/bookmarks 
 `409` is resolved by a per-key three-way merge against the last agreed copy (kept in IndexedDB `kv`), then retried;
 lists used as sets (allowlist, start-up pages, Wisp servers, hidden categories) merge as sets. Home-background
 pictures uploaded in Settings stay device-local: a picture reference that arrives through sync or an imported settings
-file never replaces this browser's own backdrop (`settings/local-picture.ts`). Bookmarks/history: the owning feature
+file never replaces this browser's own backdrop (`settings/local-picture.ts`). The same holds (`settings/local-vpn.ts`) for `vpn.mode` (this
+browser's VPN connection switch) and `vpn.killSwitch` (WAVE-C D12): a value that arrives through sync or an import
+never changes them, so a synced kill switch cannot strand a device. Game favorites and recently played (`games_favorites`,
+`games_recent`, in use since Wave C) stay in this browser and are not synced (D9; the Games page says so); the
+per-network choices of the D24 notice ("This game loads from <network> …") are kept in `kv` and cleared by Clear
+browsing data → "Game network choices". Bookmarks/history: the owning feature
 registers a `RecordSyncAdapter` (`registerRecordSync`) and calls `requestRecordSync(kind)` after local changes; `since`
 cursors live in `kv`. `settings/account.svelte.ts` holds the signed-in user (sign-in, registration etc. via
 `/api/auth/*`) and asks `GET /api/session` only when this browser was signed in last time (localStorage
@@ -531,14 +587,14 @@ export interface Settings {
     discardAfterMinutes: number;          // background tab discard when memorySaver on
     backgroundTabs: 'keep-alive' | 'discard';
     prefetchPages: boolean;
-    cacheLimitMB: number;                 // app/asset cache cap
+    cacheLimitMB: number;                 // cap on the content blocker's cached filter data (Cache Storage, proxy origin)
   };
   vpn: {
-    mode: 'off' | 'gateway';
-    preferredLocation: string | null;     // gateway profile id
-    autoConnect: boolean;
-    killSwitch: boolean;                  // if the gateway is down, block proxied traffic instead of going direct
-    verifyExit: boolean;                  // check exit IP via the proxy path
+    mode: 'off' | 'gateway';              // this browser's VPN switch; device-local (never set by sync or import)
+    preferredLocation: string | null;     // gateway profile id; null = Automatic (the first location that is up, pinned)
+    autoConnect: boolean;                 // turn the switch on at each fresh start (decided before any tab goes live)
+    killSwitch: boolean;                  // if the location is down, block proxied traffic instead of going direct; device-local
+    verifyExit: boolean;                  // this browser's exit check through the engine host (`vpn.verify`); default false
   };
   games: {
     view: 'grid' | 'list';
@@ -699,8 +755,14 @@ interface behind the engine manager, so each stays independently maintainable.
 
 **Service worker** (`/sw.js` on the proxy origin, classic script, scope `/`, built from `frontend/src/sw/`; served
 `no-cache` with `Service-Worker-Allowed: /`): one SW for both engines; it takes **no security configuration at
-runtime** (the CSP, the routing and the WebRTC policy are constants of the build; the content blocker's user
-settings of Wave B step 3 are its only runtime input, from the engine-host client).
+runtime** (the CSP, the routing and the WebRTC policy are constants of the build). Its only runtime input is the
+content blocker's (Wave B step 3), accepted only from clients it registered as engine hosts by client id (a
+navigation to `/engine/`; proxied clients are refused): the user's blocking settings (`gnome-blocker-config`), the
+compiled filter engines (`gnome-blocker-engines`, sent whenever an Ultraviolet load starts and the SW lacks the set
+in force) and the Ultraviolet page context (`gnome-blocker-context`: documents and their top-level pages, announced
+tab-top navigations, the initiators of GNOME's own loads). It persists none of it; privacy headers and cookie modes
+apply from the first request with the schema defaults until an engine host sent the user's settings (≤ 300 ms wait
+per SW start).
 - Before `importScripts` of `controller.sw.js` it replaces `self.skipWaiting` with a no-op: upstream would take over
   running engine hosts, which breaks both engines. Updates therefore **wait**; first installs still activate at once.
   The engine host applies a waiting update at startup, before any engine exists, when it is the only engine host
@@ -817,39 +879,97 @@ hostile site can reach GNOME's engine host and through it other tabs' pages and 
 the app's process, ENGINE-PROTOCOL §6.10; not tested with a real dialog).
 
 ### 5.5 Extensions (built-in, first-party)
-Research: `docs/research/sapphire.md`, `content-blocking.md`. Sapphire has **no license**, so GNOME implements its own
-first-party extension runtime (no code copied; no `chrome.*` emulation; no user-installed MV3 extensions in v1 — the UI
-never claims Chrome extension compatibility). Built-ins: **ad blocker**, **tracker blocker**, **privacy protection**,
-**cookie manager**, **cosmetic filtering**.
-- **Core** (`frontend/src/extensions/core/`, pure TS): policy (precedence: allowlist > per-site > global toggles >
-  filters; keyed by the tab's top-level registrable domain via `tldts`; subframes inherit), `@ghostery/adblocker@2.20.3`
-  + `@ghostery/adblocker-content@2.20.3` (MPL-2.0, pinned).
-- **Engine build**: lists come from the server (`GET /api/filters/:id`, which mirrors upstream lists on a schedule); a
-  Worker on the proxy origin sanitizes (ABP `{style}` → `:style()`/hide, strip `trusted-*` scriptlets from non-uBO lists,
-  validate selectors with `CSSStyleSheet.insertRule`), builds the engine and caches the serialized engine in Cache Storage
-  keyed by `ENGINE_VERSION` + preset hash (rebuild on mismatch). Blocking **fails open** until the engine is ready.
-- **Adapters**, through the hook points that Wave B step 2 already calls with a no-op (`ALLOW_ALL`;
-  `frontend/src/shared/engine-hooks.ts`): Scramjet `ManagedPlugin` per tab frame (`fetch.request` → `onRequest`: block
-  via `earlyResponse`, privacy headers (Sec-GPC, referrer trimming), tracking-param stripping (307 for documents);
-  `fetch.preresponse` → `onResponse`: third-party `Set-Cookie` policy; `init.post` → `onDocument`: cosmetic `<style>`
-  at document start + `navigator.globalPrivacyControl`); WebSockets → `onWebSocket`: the transport manager's wrapper for
-  Scramjet pages, and for UV pages a wrapper of `Ultraviolet.BareClient.prototype.createWebSocket` in each UV document
-  (UV's transport runs in the bare-mux SharedWorker, where no synchronous hook call is possible; verified with a
-  blocking verdict in both engines, e2e `host-hooks`); a
-  UV service-worker adapter (`request` → `onRequest`, `beforemod` → `onResponse`) that receives the user's blocking
-  settings from the engine-host client only (`gnome-blocker-config`). Hooks are synchronous and fail open. The WebRTC
-  kill switch is core, not an extension (§5.4).
-- **Shared realm**: the filter engine, its Worker and its Cache Storage live on the proxy origin, so code that escaped
-  its engine can disable or poison them, and any page can become such code without an engine bug (§4.6 "One shared
-  realm"). Blocking protects against sites that do not target GNOME, not against one that does, and the UI must not
-  claim more.
-- **Cookie manager**: Scramjet `controller.cookieJar` dump/load + `persistCookies()` + `propagateCookieSync()`; UV's
-  `__op` IndexedDB `cookies` store; grouped by registrable domain; per-site allow/session/block rules; clear-on-exit.
-- Lists reach the engine host as `FilterListRef`s in the settings snapshot; it fetches each from the proxy origin as
-  `GET /api/filters/<id>?v=<sha256>` (immutable caching).
-- Blocked documents show a "Blocked by GNOME" interstitial; counts per tab are reported as `tab.blocked` (CSP-blocked
-  direct connections are their own category, counted by the core without any extension).
-- Games and their publisher embeds are **never** filtered (they are not proxied; see §6).
+Research: `docs/research/sapphire.md`, `content-blocking.md`; plan and decisions D1–D19: `docs/WAVE-B3.md`. Sapphire
+has **no license**, so GNOME implements its own first-party runtime (no code copied; no `chrome.*` emulation; no
+user-installed extensions, no extension manifest; the UI never claims extension compatibility; lists are "filter
+lists" with their publishers and licenses). Built-ins: **ad blocker**, **tracker blocker**, **privacy protection**,
+**cookie manager**, **cosmetic filtering**. They exist only where the engine host offers the capability `blocker`
+(D19), which every build does since the Wave B step 3 integration (2026-11-21); the app then registers the
+`extensions` feature (Settings rows, the toolbar shield, the Extensions page, About's "Content blocking").
+
+- **Groups and toggles (D1, D2).** One `@ghostery/adblocker@2.20.3` engine per list group (`ads`, `security`,
+  `trackers`, `params`, `cookies`, `annoyances`; MPL-2.0, unmodified, `-content` for the page side). `ads` and
+  `security` follow the ad blocker, `trackers` the tracker blocker, `params` privacy protection + "Remove tracking
+  parameters", `cookies`/`annoyances` cosmetic filtering; element hiding follows cosmetic filtering, generic hiding
+  also needs aggressive mode, scriptlets follow their group. Engine configuration v1 (D12): preprocessors on (env
+  from `browserFamily()`), no extended selectors, no `$csp`, no HTML filtering, integrity check on.
+- **Precedence (D3).** Allowlist > per-site override > global toggles > filters, keyed by the tab's top-level page
+  (`src/shared/site-rules.ts`); frames inherit. A tab's own document request, every redirect hop and its response
+  are judged under the page being loaded, never the page being left. Cookie rules are keyed by the cookie's own site
+  (D4). A request whose page cannot be told (Ultraviolet, unknown context) is judged with the global settings,
+  without site rules, as third-party.
+- **Scoped site rules (D5).** The app sends `allowlist`/`perSite` only for sites the engine host shows or is about to
+  load (`tab.loading {url}` announcements, answered by a snapshot; a Scramjet tab request waits ≤ 150 ms for it), at
+  most 20 newly exposed rule-bearing sites per tab per minute and 120 per app page per hour, paused for the page after
+  two compromise signals; `cookieRules` travel whole while the cookie manager is on.
+- **Builds, cache and fail open (D6–D9).** The engine host fetches each list as `GET /api/filters/<id>?v=<sha256>`
+  and compiles it only when the body's SHA-256 matches the ref (else `changed`, the app refreshes its listing). Builds
+  run in a module Worker on the proxy origin (one at a time per browser, Web Lock with a 30 s cap), groups one after
+  the other. Every list first passes GNOME's sanitizer (`src/extensions/core/sanitize.ts`, `SANITIZER_VERSION`, part
+  of the cache key): it drops comments, procedural (`#?#`), HTML-filtering, ABP snippet and AdGuard JavaScript rules,
+  `$csp` and lines over 8 KiB, converts ABP `{style}` to `:style()`, keeps `:style()` only without `url(`, `src(`,
+  image functions, `expression(`, escapes, comments, braces or `@`, drops every hiding or `:style()` rule whose text
+  has a brace, a comment opener or a control character, and drops from lists not marked trusted every scriptlet that
+  needs trust and every scriptlet line with a backtick or `$` in its arguments. Selectors are validated by the
+  browser's own stylesheet parser on the engine host's main thread in ≈ 8 ms slices: rules that do not parse as one
+  style rule, that name `::highlight(` or that hide the root or body element are removed, except `:style()` rules on
+  the root or body that only restore the page (scrolling, backgrounds, `filter: none`, margins of 0). The built set
+  is stored in Cache Storage (`gnome-blocker-v1`) with an HMAC-SHA-256 under the app's random 256-bit `blockerKey`
+  (IndexedDB `blocker:key:v1`, never synced or exported; replaced when site data is cleared, at a start with "clear
+  site data on exit" pending, and after a compromise signal); a set that does not verify is rebuilt. Up to
+  `performance.cacheLimitMB` (16–8192, default 256) is cached; a larger set is built at every start and still reaches
+  the SW by message. Blocking fails open until a set is in force and never during updates (the old set blocks until
+  the swap); `init` waits ≤ 500 ms for a verified cached set, never for a build.
+- **Resources and scriptlets (D10, D11).** `$redirect` resources answer subresources (200), never documents;
+  Ultraviolet's JS rewrite of a script stub is required (an unrewritten stub would leave the proxy). Scriptlets run at
+  document start in the page realm through `PageKit.run`, compiled with the realm's current `Function` after the
+  engine's client (Scramjet `init.post`, UV's `__uvHook` assignment), inside `withPageAssignments`, with GNOME's JSON
+  argument assembly; never a `<script>` element, never the engine-host realm. Every page-side line keeps rule R1
+  (ENGINE-PROTOCOL §1.2 rule 10).
+- **Cosmetic filtering.** In each proxied document, at any depth, the cosmetic provider adopts one constructed
+  stylesheet of the page's own realm (a page-made `<style>` where that fails). With generic filters on it watches the
+  classes, ids and hrefs that appear (a page-realm `MutationObserver` read with engine-host natives only; at most
+  4,096 features, 1 batch per 100 ms and 512 KiB of CSS per document, stopped at a trusted `pagehide`) and adds the
+  matching generic rules to a second sheet. A document that opens before the engines are ready gets its styles when
+  they are, not its scriptlets.
+- **Privacy protection.** `Sec-GPC` and `DNT` on every request, `navigator.globalPrivacyControl`/`doNotTrack` in
+  documents GNOME attaches; the `Referer` is only ever reduced, never past a browser's default
+  `strict-origin-when-cross-origin`, in every mode and with privacy protection off; the initiating document's own
+  `Referrer-Policy` header applies to its subresources, frames and the tab navigations it starts (Scramjet serves
+  every document as `unsafe-url` and ignores `<meta name="referrer">` for its HTML's elements); `document.referrer`
+  is reduced the same way per realm. Tracking parameters are removed from tab documents and frames (GET/HEAD) by a
+  same-origin 307 (D13): the params group's `$removeparam` filters, then GNOME's built-in table (ClearURLs-derived,
+  LGPL-3.0), at most 3 times per tab (SW: per destination page) in 10 s.
+- **Cookie manager.** Modes (`block-third-party` by default, `all`, `block-all`) and per-site rules (allow, until
+  GNOME closes, block) remove `Cookie` and `Set-Cookie` before the engines' jars; "until GNOME closes" strips
+  Expires/Max-Age and the app deletes those sites' cookies at the next fresh start, before tabs are restored.
+  `document.cookie` is wrapped per realm and decides by the realm's document and the document it is called on; a
+  blocked UV document gets an empty script-cookie string. Whatever the mode, GNOME refuses `Set-Cookie` lines a
+  browser refuses (another site's or a public-suffix `Domain`, `__Secure-`/`__Host-` violations, `Secure` from
+  insecure origins), and applies SameSite to Ultraviolet's requests by Chromium's rules (Lax by default, `None` needs
+  `Secure`, two-minute Lax+POST), replacing Ultraviolet 3.2.10's cookie serialization, with the initiators the
+  engine host announces (ENGINE-PROTOCOL §6.17). The Extensions page lists both engines' jars by registrable domain
+  (names, never values).
+- **Adapters** (through `src/shared/engine-hooks.ts`; one composite registration, `src/extensions/core/compose.ts`):
+  Scramjet's per-tab `fetch.request`/`fetch.preresponse`/`init.post`; for Ultraviolet the SW's `request`/`beforemod`
+  with the page context the engine host sends (D15: documents, announced tab-top navigations, redirect hops recorded
+  as the tab's own document) and the engines by message; WebSockets judged in the page realm for Scramjet (D16, the
+  transport manager's wrapper as a backstop) and through `BareClient.prototype.createWebSocket` in each UV document.
+- **Shared realm.** The filter engine, its Worker and its cache live on the proxy origin, so code that escaped its
+  engine can disable or poison them, and any page can become such code (ENGINE-PROTOCOL §1.1: measured paths in both
+  engines). Blocking protects against sites that do not target GNOME, not against one that does; the UI says so
+  (About, "Content blocking").
+- Blocked documents show GNOME's "blocked" page (no "proceed once"); counts per tab are `tab.blocked` (CSP-blocked
+  direct connections are their own category). Games and their publisher embeds are **never** filtered (§6).
+- **Measured (2026-11-20/21, this machine, Chromium 156 / Firefox 157).** First build of the test lists ~250 ms in
+  Chromium, ~1.3 s with the 550,000-line big list in Firefox; a cached load ~260 ms after the settings command;
+  sanitizing the server's 12 lists 173 ms cold; validating the default lists' 31,077 selectors 91–110 ms of
+  main-thread work in 12–14 slices of at most 8–10 ms (above the 50–90 ms estimate, never a long task); cosmetics per
+  document under 1 ms on most sites, youtube.com with 30 scriptlets 15 ms (Chromium) / 24–26 ms (Firefox). Production
+  build 2026-11-21: engine-host entry 185.7 KB, blocker chunk 143.3 KB (dynamic import), builder Worker 279.5 KB,
+  `sw.js` 296.8 KB (raw; budgets 300/400/400 KB and +350 KB over step 2); the app's startup 144.4 KB gzip JS + 14.3 KB
+  gzip CSS. A Raspberry Pi 4 was not available: its column in WAVE-B3 §10.2 stays an estimate.
+
 ### 5.6 Browser features
 The app-side browser (`frontend/src/browser/`, `pages/browser/`) drives the engine host through the protocol; the
 library (`frontend/src/library/`, the History/Bookmarks/Downloads pages) keeps the user's data behind
@@ -915,45 +1035,111 @@ library (`frontend/src/library/`, the History/Bookmarks/Downloads pages) keeps t
   GNOME's tab too, which then does not count as a new start).
 
 ## 6. Games
-Research: `docs/research/games-sources.md`. Catalog stored server-side (`gnome-catalog` crate: unified `games` table keyed
-on `(source, source_id)` with the raw record, FTS5 search, keyset pagination, category mapping to the 14 GNOME
-categories, cross-source dedup, anonymous daily play counts). Importers stream page-by-page (never the whole catalog in
-memory), respect each source's rate limit and ETag, and hide games missing from 3 complete syncs.
-- **Sources**: GamePix public feed (`sid=1`, the publicly offered default; ~14.8k games) and a curated manifest of
-  open-source games are enabled by default. GameDistribution, Playgama, GameMonetize and Famobi importers are built but
-  stay **disabled until the operator configures their publisher/affiliate ID** (their terms license embeds only to
-  registered publishers). itch.io and js13kGames are discovery/link-out sources. CrazyGames, Poki, Armor Games,
-  Newgrounds and Kongregate are **not used** (framing blocked and/or forbidden by their terms).
-- **Player**: publisher embeds load as **direct cross-origin iframes** — never through Scramjet/UV/Wisp (proxying
-  replaces the referrer, which networks treat as invalid traffic) and never ad-blocked or overlaid. Each game is
-  framed through its own wrapper document, whose policy names that game's embed origin (Wave C, decisions log D2); the
-  shell's `frame-src` never lists embed hosts. Self-hosted open-source games are served from the **proxy origin** (the origin for
-  untrusted content), never with the app origin's privileges, with their license and author shown.
-- **Hygiene**: a configurable trademark/knock-off blocklist marks matches `ip_risk` and hides them by default; text is
-  sanitized; thumbnails go through `/api/thumb/:id` (host allow-list derived from enabled sources, size limits).
-- Favorites and recently played are local (IndexedDB) and synced only when the user opts in.
+Research: `docs/research/games-sources.md`; module plan and decisions: `docs/WAVE-C.md` (D2–D11, D19–D22, D24). The
+catalog is stored server-side by the `gnome-catalog` crate (unified `games` table keyed on `(source, source_id)` with
+the raw record, FTS5 search, keyset pagination, category mapping to the 14 GNOME categories, cross-source dedup,
+anonymous daily play counts) and served by gnome-server's games module (`backend/src/games/`). Importers stream
+page-by-page (never the whole catalog in memory), respect each source's rate limit and ETag, and hide games missing
+from 3 complete syncs.
+- **Sources**: the GamePix public feed (`sid=1`, the publicly offered default; 16,041 records, 15,722 listed on
+  2026-11-23) and a curated manifest of open-source games are enabled by default. GameDistribution, Playgama,
+  GameMonetize and Famobi importers are built but stay **disabled until the operator configures their
+  publisher/affiliate ID** (their terms license embeds only to registered publishers). itch.io and js13kGames are
+  discovery/link-out sources (`playable: false`, opened in a new tab, never framed). CrazyGames, Poki, Armor Games,
+  Newgrounds and Kongregate are **not used** (framing blocked and/or forbidden by their terms). No catalog entry is
+  fabricated: tests replay real feed captures (`gnome-server catalog import --replay`) or GNOME's own test game.
+- **Jobs**: `catalog.import` (first tick 30 s after start, then every `GNOME_CATALOG_REFRESH_HOURS` per source),
+  `catalog.rankings` (hourly; also purges the play counter's hourly dedup hashes), `catalog.policy` (every 5 min: the
+  frame policy and the cached stats), `catalog.oss-fetch` (`GNOME_OSS_FETCH=auto`). A module start-up hook
+  (`Module::prepare`, D21) prepares the catalog before any listener accepts; until it has run the routes answer `503`.
+  The admin listener starts imports and OSS fetches, features or hides games, and shows the embed hosts (with the
+  `pending` ones), the thumbnail cache and the OSS builds (`/admin/diagnostics` `catalog`, `games`).
+- **Reads are public** in every access mode (D8): `GNOME_ACCESS_MODE` means "who may use the proxy". Hidden categories
+  and "only games that work on touch screens" are applied by the server (`exclude=`, `mobile=1`, D11), so totals and
+  pages stay right.
+- **Player** (`/play/<slug>`): publisher embeds load as **direct cross-origin iframes** — never through
+  Scramjet/UV/Wisp (proxying replaces the referrer, which networks treat as invalid traffic) and never ad-blocked,
+  rewritten or overlaid. Every game is framed through its **wrapper document** `/play-frame/<slug>` on the app origin
+  (D2, §4.3): no script, its own CSP whose `frame-src` names exactly that game's embed origin, one sandboxed iframe
+  (popups may escape the sandbox for ad click-outs; COOP severs their opener). Which hosts may be framed is decided per
+  game (D4): a fixed embed host of an enabled source, or a developer host the operator approved in
+  `GNOME_GAMES_EMBED_HOSTS`; catalog data never adds a host, and a refused game shows "can't be played here" with a
+  link to its source (`embed_allowed: false`). The shell's `frame-src` never lists embed hosts.
+- **Before a network's first frame** (D24) the stage says "This game loads from <network>. <network> and its
+  advertisers see your IP address and may set cookies." with **Play**; the choice is remembered per network in this
+  browser (Clear browsing data → "Game network choices", or "Forget" on the Games page). OSS games need no notice.
+  GNOME is not a consent tool: operators with EU visitors bring their own (README).
+- **Open-source games** (D5, D6) are served by gnome-server from the **proxy origin** under `/oss/<slug>/` (two-origin
+  mode only; in single-origin mode the `oss` source is disabled with a start-up warning), never with the app origin's
+  privileges. Only manifest entries with a recorded review of their pinned commit are enabled (no storage clearing, no
+  `innerHTML` from the URL or messages, no external loads); entries that need no storage run `isolated` (an
+  opaque-origin sandbox). The pinned commit is downloaded from `codeload.github.com` through the SSRF-safe client and
+  extracted with caps (regular files only) into `GNOME_OSS_GAMES_DIR` (`GNOME_OSS_MAX_MB`). Each game page shows its
+  license, copyright, repository and commit, and links the LICENSE file. Reviewed and enabled on 2026-11-23: `2048`,
+  `javascript-racer`, `javascript-breakout`, `bullethell` (isolated), `clumsy-bird`; disabled with the reason:
+  `a-dark-room`, `hextris`, `hexgl` (review) and `particle-clicker`, `javascript-chess`, `a-blast` (CDN code, O10).
+- **Thumbnails** go through `/api/thumb/:id` by default (D7): SSRF-safe client with the enabled sources' thumbnail
+  hosts as allow-list, ≤ 2 MiB, the declared type must be an allowed raster type and match the magic bytes, a disk LRU
+  (`GNOME_THUMB_CACHE_MB`, `0` = pass-through without storing). `GNOME_THUMB_PROXY=false` loads them from the source.
+- **Hygiene**: a configurable trademark/knock-off blocklist marks matches `ip_risk` and hides them by default; titles
+  and texts are plain text. `/ads.txt` is served from an operator file (`GNOME_ADS_TXT`, D22).
+- **Favorites and recently played** stay in this browser (IndexedDB `games_favorites`, `games_recent`; D9): not
+  synced; the page says so. The play counter dedups per session (or per IP /64) and hour and stores only a 16-byte
+  hourly hash.
+- **Frontend** (`src/games/`, `src/pages/games/`): the Games page (search, category chips, shelves Featured,
+  Trending, Popular, New, Favorites, Recently played, and "All games" as a virtualized grid or list over keyset pages,
+  at most 15,000 items kept), the detail page and the player (Fullscreen, the notice, the license panel for OSS games).
 
 ## 7. VPN
-Research: `docs/research/mullvad-vpn.md`. GNOME is a website only, so the VPN feature is **browser-compatible gateway mode**: traffic loaded inside GNOME is
-routed through operator-configured egress gateways (separate HolyWisp instances whose egress goes through a VPN
-tunnel such as a Mullvad WireGuard connection set up on the server by the operator). The UI shows connection status,
-selected location, server selection, verified exit information and clear errors, and states plainly that only pages
-opened in GNOME are routed — never system-wide protection. No native/desktop companion is built (product decision:
-website only). VPN credentials (WireGuard keys / account numbers) live only in the server operator's configuration and
-are never requested from end users.
-- **Operator setup** (`services/vpn/README.md`, `profiles.example.toml`, `compose.example.yml`): per offered location, one HolyWisp instance on its own loopback port whose egress
-  goes through the VPN — e.g. gluetun (pinned) with HolyWisp in its network namespace, or HolyWisp's
-  `proxy=socks5://<relay IP>:1080` through a Mullvad tunnel (IP literals, DNS via the tunnel). `GNOME_VPN_PROFILES`
-  lists them (`id`, label, country/city, upstream). Operators must use their own account for household use only (Mullvad's
-  terms forbid offering VPN service to others); no Mullvad logos/branding, plain-text mention + non-affiliation note.
-- **Status** is based only on probes over the same path, in two parts. The server's `wisp.health` probe (TCP connect +
-  WebSocket handshake + first Wisp frame to the profile's HolyWisp, every 60 s; failed or older than 3 min = `down`)
-  is the `status` in `/api/vpn/locations` and `/api/health`: it proves the location's instance answers, not that its
-  exit works. A tunnel that is down fails closed (the instance answers, its streams do not connect), so only the exit
-  check (`verify_url` loaded through the profile's path) may mark a location verified. The VPN page shows
-  connect/disconnect, location list with status, the verified exit (checked from the user's browser through the proxy
-  path when `verifyExit` is on), errors, and privacy information. `killSwitch`: if the selected gateway is down,
-  proxied traffic is blocked instead of falling back to direct egress.
+Research: `docs/research/mullvad-vpn.md`; module plan and decisions: `docs/WAVE-C.md` (D12–D18, D23, §6–§8). GNOME is a
+website only, so the VPN feature is **browser-compatible gateway mode**: traffic loaded inside GNOME is routed through
+operator-configured egress gateways (separate HolyWisp instances whose egress goes through a VPN tunnel the operator
+set up on the server). Only pages opened in GNOME are routed — never system-wide protection, never the games (they
+load directly from their publishers). No native/desktop companion is built (product decision: website only). VPN
+credentials live only in the server operator's configuration and are never requested from end users.
+- **Operator setup** (`services/vpn/README.md`, `profiles.example.toml`, `compose.example.yml`): per offered
+  location, one HolyWisp instance on its own loopback port whose egress goes through the VPN (e.g. gluetun with
+  HolyWisp in its network namespace, or HolyWisp's `proxy=socks5://…` through a tunnel). `GNOME_VPN_PROFILES` lists
+  them (`id`, label, country/city, upstream). The operator runs the locations over connections they are authorized
+  to share with the people who use the server; no provider is presented as usable for a multi-user service, and there
+  is no provider branding. `config check` and start-up **warn** (D16) when profiles are offered in `open` mode, in
+  `accounts` mode with open registration, or (a reminder) in `code` mode, unless the operator states
+  `GNOME_VPN_EGRESS_SHARED_OK=true`.
+- **Health** (`status` in `/api/vpn/locations` and `/api/health`): the `wisp.health` probe (TCP connect + WebSocket
+  handshake + first Wisp frame to the profile's HolyWisp, every 60 s; failed or older than 3 min = `down`). It proves
+  the location's instance answers, not that its exit works: a tunnel that is down fails closed.
+- **Exit check** (D14, D15): only when the operator set a check service (`GNOME_VPN_CHECK_URL`, **empty by default**;
+  optionally `GNOME_VPN_CHECK_URL_V6`), gnome-server checks each location's exit itself through that location's own
+  HolyWisp (a minimal Wisp v1 client, TLS by rustls, one GET with the neutral `User-Agent: exit-check/1`, 15 s
+  deadline), every `GNOME_VPN_CHECK_INTERVAL_MIN` ± 20 % (first checks spread over the whole interval) and on request
+  (`POST /api/vpn/locations/:id/check`, at most once a minute per location). The result is `exit` in
+  `/api/vpn/locations`, shown only to clients the access policy admits. **Exit checks never change the route or the
+  connection state**: a failed check is a warning ("The exit check through <label> fails: <reason>"). Results are
+  worded as what the service reported ("<service> reports <ip> in <country>"), never as proof.
+- **The app** (`src/vpn/`, `src/pages/vpn/`): `vpnState()` polls `/api/vpn/locations` (60 s, backoff, paused while
+  hidden) and is the browser's single status source. "Connected" rests on the app's own facts (D13): the route the app
+  chose is that location's profile and the server reports it `up`; the engine host's transport report only refines
+  `connecting`, and is labelled as forgeable. `vpn.mode` and `vpn.killSwitch` are **device-local** (D12): sync and
+  imports never set them. **Automatic** (`preferredLocation: null`, D17) = the first location that is up, pinned for
+  this app page while it stays up (a switch shows a toast naming both); a chosen location is never replaced (unusable →
+  the kill switch blocks, else the default route). Auto-connect is decided inside the browser's start, before any tab
+  goes live. The kill switch blocks proxied traffic while the location is down and forces WebRTC to `block`.
+  `registerFeature('vpn')` runs in every build (D18), so the VPN page and Settings → VPN work even when no location is
+  offered; the tab-strip chip shows "VPN · Blocked" or "VPN · Not in use" linking to `/vpn`, and the error overlay has
+  an "Open VPN page" link.
+- **Route-bound Wisp tickets** (D23, §4.6): the app mints a ticket for the chosen route and mints anew on every route
+  change; the gateway accepts a ticket only on its own path and refuses older default-route tickets once a profile
+  ticket was minted (and closes such open default-route connections), so a page cannot switch itself to the direct
+  route. Connections on a previous *profile* route keep running until their page reloads; the VPN page counts those
+  tabs ("<n> tabs may still use the previous route until you reload them"; O16).
+- **This browser's check** (`vpn.verifyExit`, **off by default**, and only with a check service): after a connect or
+  route change and on **Check again**, the engine host loads `verify_url` through the route (`vpn.verify`); the page
+  says that a page that broke out of GNOME's browser engine can fake this answer, warns when it differs from the
+  server's check, and never calls agreement a confirmation.
+- **VPN page** (`/vpn`): status card (Off, Connecting, Connected, Blocked, Not in use, with the exit warning),
+  Connect / Disconnect, the Exit check card (server check, this browser's check, Check again), the Locations card,
+  the Behaviour card (kill switch, connect automatically, check this browser's exit) and a privacy card. A real VPN
+  tunnel end to end is `[unproven]` (WAVE-C O7): the e2e tests use a second HolyWisp as a stand-in location.
 
 ## 8. Build & deployment
 Frontend: Vite production build (minify, tree-shake, CSS minify via Lightning CSS, hashed assets, no public source
@@ -983,6 +1169,8 @@ drives each one's keyboard path, touch hit targets and an axe-core WCAG 2.2 AA a
 | @ghostery/adblocker | MPL-2.0 | Used unmodified |
 | Filter lists (EasyList etc.) | GPLv3 / CC BY-SA 3.0 (varies) | Downloaded from upstream at runtime, attributed in UI |
 | Sapphire | **no license** | Not bundled; architecture studied only |
-| Mullvad app | GPL-3.0 | No code used; CLI/public APIs only; no branding |
+| Open-source games (`crates/catalog/oss-games.toml`: 2048, javascript-racer, javascript-breakout and bullethell MIT, clumsy-bird GPL-3.0) | each game's own license | Not part of GNOME's build: fetched by gnome-server at the pinned commit from the upstream repository and served unmodified; every game's detail page shows its license, copyright, repository and commit and links its LICENSE file (About → Licenses says so) |
+| Publisher games (GamePix and the opt-in networks) | the networks' publisher terms | Embedded directly, never proxied, rewritten, overlaid or ad-blocked; the operator configures each network (README "Games catalog") |
+| Mullvad app | GPL-3.0 | No code used; no branding; GNOME calls no provider service by default |
 | Lucide icons | ISC | Attributed |
 | Fonts (Geist, Fraunces, Inter, Atkinson Hyperlegible Next) | OFL-1.1 | Attributed |

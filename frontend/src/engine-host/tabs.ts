@@ -118,6 +118,8 @@ export class TabManager {
   readonly #ownRequests = new WeakSet<object>();
   #navSeq = 0;
   #combos: CompiledCombos = { apple: false, list: [] };
+  /** The opener (real URL) of a navigation a page asked for (tab.create start.opener), kept for its Ultraviolet retry. */
+  readonly #navOpener = new WeakMap<Nav, string>();
   /**
    * UV documents' proxied URLs without the fragment (as at their document start, and the tab-top navigations this host
    * announced to the SW, with their navigation) → their tab, for uv-blocked (LRU, WAVE-B3 §4.4). The SW counts a
@@ -270,6 +272,7 @@ export class TabManager {
       ...(opts.targetIndex !== undefined ? { targetIndex: opts.targetIndex } : {}),
       ...(opts.restore ? { restore: true } : {}),
     });
+    if (opts.opener) this.#navOpener.set(nav, opts.opener);
     tab.docAtNavStart = this.#frameDoc(tab);
     this.#loadFrame(tab, url, opts.opener ?? null);
     if (choice.initFailed && !tab.initFailedNotified) {
@@ -307,7 +310,9 @@ export class TabManager {
       this.#uvLoad();
       this.#startCounts(tab);
       this.#noteUvNav(tab, abs);
-      this.ctx.blocking.uvContext()?.nav(abs);
+      // The load's initiator for SameSite and fetch metadata (lane x3's glue): none for GNOME's own load, the opener
+      // for a tab a page asked for.
+      this.ctx.blocking.uvContext()?.nav(abs, opener ?? '');
     }
     const N = this.ctx.N;
     try {
@@ -436,7 +441,8 @@ export class TabManager {
             ...(nav.restore ? { restore: true } : {}),
           });
           tab.docAtNavStart = this.#frameDoc(tab);
-          this.#loadFrame(tab, url);
+          // The retry keeps the navigation's initiator: a tab a page asked for is not GNOME's own load (SameSite).
+          this.#loadFrame(tab, url, this.#navOpener.get(nav) ?? null);
         } catch (err) {
           tab.nav.fallbackFailed(nav, err instanceof Error ? err.message : String(err));
         }
@@ -515,11 +521,17 @@ export class TabManager {
    * SameSite rules apply as in a browser instead of the `strict` mode of a request without one.
    */
   #onBehalfOf(tab: Tab, proxiedUrl: string, w: Window | null): void {
-    if (tab.engine !== 'scramjet' || !w) return;
+    if (!w || (tab.engine !== 'scramjet' && tab.engine !== 'ultraviolet')) return;
     let doc: string;
     try {
       doc = this.ctx.N.locationHref.call(this.ctx.N.winLocation.call(w));
     } catch {
+      return;
+    }
+    if (tab.engine === 'ultraviolet') {
+      // Under Ultraviolet the service worker judges the fetch with the page as its initiator (`inits`).
+      const real = this.#realOf(tab, doc);
+      if (real && /^https?:/i.test(real)) this.ctx.blocking.uvContext()?.init(new URL(proxiedUrl, location.href).href, real);
       return;
     }
     if (!doc.startsWith(`${location.origin}${PROXY_PATHS.scramjetPrefix}`)) return;

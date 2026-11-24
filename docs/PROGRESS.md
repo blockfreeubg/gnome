@@ -2,7 +2,7 @@
 
 Legend: `[x]` done & verified · `[~]` in progress · `[ ]` not started · `[!]` blocked / needs decision
 
-Last updated: 2026-11-20 (session 7)
+Last updated: 2026-11-23 (session 9, Wave C integration step)
 
 ## Phase 1 — Research & architecture
 - [x] Inspect existing project (only `logo.png` — a 392×510 JPEG named `.png`)
@@ -28,7 +28,8 @@ Last updated: 2026-11-20 (session 7)
 - [x] Persistent settings store (local-first + optional account sync) + Settings/About pages — 2026-11-11: every
       `schema.ts` key has a working control, account sync with a per-key three-way merge, About; reviewed (Playwright QA in
       Chromium + Firefox against a real gnome-server). Rows of features this build lacks stay hidden until those features
-      register: `browser` registers since Wave B step 2; `extensions`, `vpn` and `games` rows are still hidden
+      register: `browser` registers since Wave B step 2, `extensions` since step 3, `games` (while the server offers a
+      catalog) and `vpn` (every build) since Wave C
 - [x] Rust backend core (config, SQLite, sessions/auth, rate limiting, security headers, static serving, health, admin listener) — 2026-11-10: finished + independent review (17 fixes incl. a login-backoff race)
 - [x] gnome-net SSRF-safe client, Wisp gateway (zero-copy splice), VPN gateway profiles, filter-list service — 2026-11-11:
       built + independently reviewed, with two origins and Wisp tickets (1 h TTL, `?t=<ticket>&/`, 401/426 ticket probe) and
@@ -51,19 +52,36 @@ Last updated: 2026-11-20 (session 7)
 - [x] Tabs, toolbar, omnibox, loading indicators, fullscreen, shortcuts, context menus — Save link/image works since part 2;
       every §7 browser-gated setting checked through the UI (c4.mjs)
 - [x] History, bookmarks, downloads, session restoration — part 2 gate: library suites pass in both browsers
-- [ ] Extension architecture + built-ins (ad blocker, tracker blocker, privacy, cookie manager, cosmetic filtering)
+- [x] Extension architecture + built-ins (ad blocker, tracker blocker, privacy, cookie manager, cosmetic filtering) —
+      Wave B step 3, gate 2026-11-23: the full runner in Chromium + Firefox (802 / 793 pass; every other row is an expected
+      limit About lists, a tree-copy artifact or green on re-run); re-runs on the final tree green. Open: blocker rows over
+      the epoxy transport (not the default; Deferred items)
 
 ## Phase 5 — VPN
-- [~] Browser-compatible VPN (proxy traffic via authorized egress gateways) — server side done 2026-11-11
-      (`GNOME_VPN_PROFILES`, `/wisp/p/<id>/`, health probes, `/api/vpn/locations`, `services/vpn/` recipes checked
-      statically); the exit check through the location's path and the kill switch come with the VPN page (Wave C)
+- [x] Browser-compatible VPN (proxy traffic via authorized egress gateways) — server side 2026-11-11
+      (`GNOME_VPN_PROFILES`, `/wisp/p/<id>/`, health probes, `/api/vpn/locations`); Wave C (gate 2026-11-23): the
+      server's exit check through each location's HolyWisp (only with the operator's `GNOME_VPN_CHECK_URL`), route-bound
+      `w2` Wisp tickets (D23), the kill switch in the browser's route choice, the D16 terms warnings. Tested with a
+      stand-in location; a real VPN tunnel end to end stays `[unproven]` (WAVE-C O7: needs an operator's account)
 - [x] ~~Native companion~~ — dropped: GNOME is a website only (user direction, 2026-11-09)
-- [ ] VPN page + settings
+- [x] VPN page + settings — Wave C (gate 2026-11-23): `/vpn` (status, Connect / Disconnect, Automatic pinned or a
+      chosen location, Exit check card with this browser's optional check, Behaviour switches, privacy card), the tab-strip
+      chip, Settings → VPN texts (§10), `vpn.mode`/`vpn.killSwitch` device-local, `registerFeature('vpn')` in every build;
+      `vpn-ui` in Chromium + Firefox under Scramjet and Ultraviolet
 
 ## Phase 6 — Games
-- [~] Catalog DB + importer (legitimate feeds only) + search (FTS5) + pagination — `gnome-catalog` built 2026-11-10: live GamePix import 14,865 games (199 s, ~11 MiB peak), 244 ip_risk hidden, queries < 1 ms; reviewed 2026-11-11 (re-check: 14,929 games, 315 ip_risk); server routes/jobs/thumbnails/OSS fetch in Wave C
-- [ ] Games page (search, categories, trending, new, popular, featured, favorites, recent)
-- [ ] Player (official embeds, fullscreen, optional proxied mode)
+- [x] Catalog DB + importer (legitimate feeds only) + search (FTS5) + pagination — `gnome-catalog` built 2026-11-10,
+      reviewed 2026-11-11; served by gnome-server's games module since Wave C (gate 2026-11-23): `/api/games*`, jobs,
+      thumbnail proxy + disk cache, the frame policy and `/play-frame/<slug>`, OSS fetch + `/oss/<slug>/`, `/ads.txt`,
+      the `catalog` CLI with `--replay`, admin endpoints. Online run 2026-11-23: full GamePix import through the CLI
+      16,041 games / 15,722 listed in 168 s, peak RSS 44 MiB; keyset paging 158 pages of 100 in < 0.2 s, no duplicates;
+      the 5 reviewed OSS builds fetched and loaded in both browsers
+- [x] Games page (search, categories, trending, new, popular, featured, favorites, recent) — Wave C: `games-ui` in
+      Chromium + Firefox; favorites and recently played local only (D9); at scale the "All games" grid keeps 15,000
+      items (Chromium p95 16.8 ms per frame, Firefox 33.5 ms; Deferred items)
+- [x] Player (official embeds, fullscreen, ~~optional proxied mode~~) — Wave C: the per-game wrapper with its own
+      frame policy (D2, D4), the network notice (D24), Fullscreen; `games-player` in Chromium + Firefox. The proxied mode
+      was dropped by the 2026-11-10 decision (embeds are never proxied, rewritten, overlaid or ad-blocked)
 
 ## Phase 7 — Rust optimization & benchmarks
 - [ ] Node.js baseline for hot paths + wisp-js baseline
@@ -86,7 +104,102 @@ Last updated: 2026-11-20 (session 7)
       `README.md` written and verified 2026-11-18 (workflow `wf_b4427f98-2f1`); each wave keeps it current; the
       deployment guide follows Wave D
 
-## ▶ RESUME HERE (session 7, 2026-11-20 — Wave B step 3 resumed: x4 builder, lane reviews, integration, gate)
+## ▶ RESUME HERE (session 9, 2026-11-24 — Wave C finished (`c-finish`); next: Wave D)
+
+- **Wave C final step (`c-finish`, 2026-11-24).** Everything from the live tree after `c-review-fix` (scripts in
+  `handoff/progress/c-finish-scripts/`, logs in the scratchpad `c-finish/logs/`). `cargo fmt --check`, `clippy -D
+  warnings` clean; `cargo test --workspace --locked` 500 passed, 5 ignored. `npm run check` 0 errors, `npm test`
+  1497/1497 (`games/library.test.ts` waited on reload timing under load; it now polls for ready). Full e2e runner,
+  both browsers at once: Chromium 798 pass / 13 fail / 21 skip, Firefox 788 / 19 / 23; every failure is an expected
+  limit (A0, A7, cs-href, P4, P6m, P12, borrow-natives, clipboard, Firefox autoplay, the WebRTC gaps, Firefox's
+  Scramjet SharedWorker row) or the `sw` build-id row, which passes with the runner's own build (28/0 and 27/1, the
+  known SharedWorker limit). Wave C suites, no failures: `backend-games` 27/0/3 both, `games-ui` 12/0/5 both,
+  `games-player` 15/0/2 and 14/0/3 (P5 and P12 pass in Chromium), `vpn-ui` 28/0/3 both (V15 included). QA stack:
+  `stack-qa` 95/95 and 91/91 (profile route), `about-qa`, `settings-qa`, `settings-features-qa` pass in both browsers
+  (no `bluetooth` warning any more; the filter-list 404/503 rows and both scripts' Wisp-editor rows were stale rows:
+  the filter rows now run in fresh browser contexts, and the editor is only shown with `GNOME_ALLOW_CUSTOM_WISP`).
+  `visual-qa`: the `/games` phone layout shift is fixed (the loading skeleton now has one shelf-sized placeholder per
+  section, so "All games" no longer moves); the only finding left is the multi-origin `postMessage` console noise on
+  `/browse` (Deferred items, "Wave C final step findings"). About's limitations now also name the games list's
+  15,000-game cap (`about-qa` green in both browsers). Open: the rows not written yet and the Deferred items "Wave C …".
+
+
+- **Wave C integration step (`c-gate`, 2026-11-23).** Matrix from a snapshot of the tree taken at 21:19
+  (`~/.cache/gnome-c-gate-snap/tree`, node_modules hard-linked; logs and scripts in the session kit
+  `handoff/progress/c-gate-scripts/` and the scratchpad `c-gate/logs/`). Results:
+  - `cargo fmt --check`, `clippy -D warnings`: clean; `cargo test --workspace --locked`: 500 passed, 5 ignored. By hand
+    with network: `holywisp_e2e` 2/2 (the profile-path test fixed for D23), `games_online` 1/1, `games_oss` online
+    fetch 1/1; `vpn_exit` online not run (needs an operator's check endpoint, O6/O7). `npm run check` 0 errors,
+    `npm test` 1497/1497, `npm run build` ok.
+  - Full e2e runner, Chromium + Firefox at once (offline, prebuilt dist): Chromium 781 pass / 17 fail / 26 skip,
+    Firefox 773 / 22 / 28. Wave C suites: `backend-games` 26/1/2 and 27/0/3, `games-ui` 12/0/5 both, `games-player`
+    13/1/3 and 14/0/3, `vpn-ui` 16/0/8 both. Expected limits (expectFail): A0, A7, cs-href, P4, P6m, P12,
+    borrow-natives, the clipboard rows (and autoplay in Firefox), the WebRTC gaps, Firefox's Scramjet SharedWorker row.
+    Re-runs: `sw` build-id row passes with a runner build (a `--no-build` artifact); `host-attack
+    escaped-engine-iframe-navigation` was a stale row since D2 put `'self'` in the shell's `frame-src` (rewritten:
+    the app origin must not render framed; passes in both browsers); `backend-games:suite` (Chromium) was B13's parent
+    page navigating itself away (fixed to a routed proxy-origin page; 27/0/3); Firefox `host-nav link-form-replace-reload`
+    passed on re-run (flake). **Still failing:** `games-player` P5 in Chromium (2/2 runs: `getUserMedia` →
+    `NotFoundError` instead of `NotAllowedError`; Firefox passes; cause not triaged).
+  - QA: `stack-qa` 95/95 and 91/91 through the profile route (its probe path fixed for D23); `settings-qa`, `about-qa`
+    Firefox all pass; in Chromium only the console warning "Unrecognized feature: 'bluetooth'" of the app's
+    `Permissions-Policy` (c-review-fix removed `bluetooth` from `csp.rs` after the snapshot; not re-run);
+    `about-qa`'s content-blocking row was stale since 2026-11-21 (fixed). `settings-features-qa`: the filter-list
+    404 / 503 rows fail in both browsers on every run (not triaged; Settings may cache `/api/filters` since step 3).
+    `visual-qa`: Firefox all pass; Chromium `layoutshift phone /games` CLS 0.020 at the 0.02 limit (3/3 runs, the
+    "All games" title).
+  - Online rows: full GamePix import 16,041 / 15,722 listed in 168 s, peak RSS 44 MiB; HTTP keyset paging 158 pages, 0
+    duplicates, ≤ 14 ms a page; U4 at scale in both browsers (15,000-item cap reached, see Deferred items); the 5 OSS
+    builds fetched and each `/play/<slug>` rendered in both browsers (two console findings, Deferred items). B16's e2e
+    row is still a stub that skips even with `GAMES_E2E_ONLINE=1` (cargo `games_online` covers one thumbnail).
+  - Documents written: ARCHITECTURE §3, §4.1–4.6, §5.2–5.3, §6, §7, §9; API.md; ENGINE-PROTOCOL §1.1, §1.2, §4, §6.5,
+    §6.13; DESIGN §12; README (status, features, Games catalog with the operator table, VPN, Everything on — run with
+    other ports —, Using GNOME, limitations, Development); backend/README; About (limitations, Licenses intro); this
+    file. The still-failing rows above were settled by the final step (`c-finish`, above).
+
+- **Session 9 (2026-11-23, session `27931f59-292f-48ad-934f-47bd9fa5f6a4`)**: the user asked to finish quickly with little
+  usage, so the orchestrator finished the cut-off `b3-review-fix` and `b3-gate` inline, without agents. `b3-gate-run`'s
+  full runner had finished on the 2026-11-21 14:12 snapshot (Chromium 802 pass / 16 fail, Firefox 793 / 22; logs in
+  `~/.cache/gnome-e2e-b3-gate-run/`). Except for the expected limits, three rows had failed. The two build-graph rows fail
+  only in the symlinked tree copy and pass 17/17 from a hardlinked copy. `shell-sw-update` passed on re-run.
+  `host-hooks hooks:unregistered` (Scramjet, both browsers) was a real failure: the D16 WebSocket backstop kept its 5 s
+  block mark after the hooks in force changed. Fixed: `WsMarks.clear()` on every hooks change, with unit-test assertions.
+  Firefox's `sites:hn` hit the known intermittent libcurl code 35. `b3-review-fix` had added three things: the
+  Ultraviolet retry keeps a page-opened tab's opener as its initiator (tabs.ts plus a host-fallback row), an
+  over-long-initiator unit test, and `E2E_BLOCKER_TRANSPORT=epoxy` (§12.4). Its epoxy run showed that the fixture server
+  refused epoxy's absolute-form WebSocket target (N10); fixed in `servers/blocker-fixtures.mjs`. Re-runs on the final
+  tree (logs in `~/.cache/gnome-e2e-b3-gate/logs/`) pass in Chromium + Firefox: build 17/17, host-hooks, host-fallback,
+  shell-sw-update, and N10 over epoxy. Still open: blocker rows over epoxy (Deferred items). `npm run check` 0 errors,
+  `npm test` 1408/1408. The backend has not changed since the gate-run's cargo pass (clippy clean; 445 pass; the 2
+  ignored tests pass by hand). **Next:** Wave C (docs/WAVE-C.md; by D1, v3, the shared documents and the final matrix
+  were waiting for step 3's integration), then the Wave D a-parts, one wave at a time. D10 (obfuscation) still waits
+  for the user.
+  - **Running: Wave C, lean (`wf_2223e3b1-181`, launched 2026-11-23 ~16:15)**: `c-backend` (g1 + v2, ports 21000-)
+    ∥ `c-frontend` (§3.2 + g2 + v1, 22000-) → `c-wire` (real routes, v3, lane t; 23000-) → `c-review-fix` (24000-) →
+    `c-gate` (§14 documents, §13.2 matrix; 25000-). Kit: `~/.claude/projects/-home-duderucool-gnome/27931f59-292f-48ad-934f-47bd9fa5f6a4/handoff/`
+    (`progress/<label>.md` logs, `reports/<label>.json`); script in that session's `workflows/scripts/`. In a new
+    session, write a continuation from the run's journal (`subagents/workflows/wf_2223e3b1-181/journal.jsonl`).
+
+### Session 8 (2026-11-21 — Wave B step 3 finish, lean: integrate → review+fix → gate)
+
+- **Session 8 (2026-11-21 12:50, session `7e02b548-9890-438d-801f-3181a809dfd7`)** picks up after the WEEKLY limit
+  cut off `wf_a58961ae-b46` on 2026-11-20 at 17:13. That run had finished the x4 builder and the x1, x2, x3 and x5
+  reviews (all pass_after_fixes; reports in session 6's `handoff/reports/`). The x4 reviewer was cut off near its end
+  with no report (its fixes are listed in `handoff/progress/b3-x4-review.md`; condensed transcript in
+  `handoff/resume/cutoff-s7-b3-x4-review.md`). The integration, reviews, fix and gate died at their start. The user then
+  made the project a git repo (commit `84b1954`, pushed to GitHub); agents use git read-only. The machine rebooted
+  before this session. Tree at 12:55: check 0 errors, npm test 1408/1408. The user asked to keep usage low (paid
+  credits), so the six remaining steps became three, run one after another: **`wf_741caf86-afb`** = `b3-integrate`
+  (ports 15000-, closes x4's review and all cross-lane items, effort high) → `b3-review-fix` (16000-; one independent
+  security + completeness review that fixes what it verifies) → `b3-gate`. At 14:10 the user asked to speed it up. Once
+  `b3-integrate` finished, the run was stopped and resumed with a new tail (its result comes from the cache):
+  `b3-review-fix` (16000-, effort high) ∥ `b3-gate-run` (17000-, report only: the full runner on the integrated tree,
+  Chromium and Firefox at the same time, real sites, QA, cargo) → `b3-gate` (18000-, effort medium; re-runs what failed
+  or changed after gate-run's snapshot, makes the documents true, ticks PROGRESS outside this section). Every e2e run
+  now runs both browsers at once (port base and base + 500). Watcher `handoff/scripts/watch_s8.py` saves the reports. Script:
+  `.../7e02b548-9890-438d-801f-3181a809dfd7/workflows/scripts/gnome-wave-b3-finish-s8-wf_741caf86-afb.js`; journal:
+  `.../7e02b548-9890-438d-801f-3181a809dfd7/subagents/workflows/wf_741caf86-afb/journal.jsonl`.
+
 
 - **Session 7 (2026-11-20 15:00, session `644420fb-ffdf-4b95-9476-f363487a0e45`)** picks up after the 5-hour limit cut off
   `wf_93c6a14d-9c1` on 2026-11-19 at 12:39 (lane x4's builder and the reviewers of x1, x2, x3 and x5 mid-work; the builders
@@ -336,7 +449,7 @@ Each item needs an owner lane in `docs/WAVE-B.md`. Full reports: `~/.claude/proj
   2026-11-11 the server raises its soft `RLIMIT_NOFILE` to the hard limit at startup).
 - `GET /api/sync/bookmarks` pagination for very large accounts.
 - ~~Home background images from https: URLs load directly (reveals IP to that host) — Settings must say so or prefer uploaded images.~~ — done 2026-11-11 (Settings → Appearance says so; uploaded pictures stay in the browser).
-- Wave C backend: app CSP `frame-src` from `gnome_catalog` `embed_hosts()` after each import (Playgama embeds from developer hosts), not a fixed list; OSS fetch step into `GNOME_OSS_GAMES_DIR` + serve `/oss/<slug>/` on the proxy origin; add the crate's own settings (`GNOME_GAMEPIX_SID`, publisher IDs, `GNOME_OSS_*`, … ARCHITECTURE §4.2) to `config.rs` `VARS` (API.md/ARCHITECTURE §4.5 already list the crate's additive fields and tables).
+- ~~Wave C backend: app CSP `frame-src` from `gnome_catalog` `embed_hosts()` …; OSS fetch step …; the crate's own settings in `VARS`.~~ — done in Wave C (2026-11-23): per-game wrapper policies instead of a shell list (D2, D4), `catalog.oss-fetch` + `/oss/<slug>/` (D5, D6), every catalog variable is a server setting.
 - **Cookie flood across the origin boundary (Wave D decision):** escaped code on the proxy origin can plant about 160 KB+
   of cookies that the app origin also receives (dev two-port: same host; production: a proxy hostname under the app's
   domain can set `Domain=<app domain>`), so every app request exceeds hyper's head limit and the app is unusable. Options:
@@ -350,6 +463,48 @@ Each item needs an owner lane in `docs/WAVE-B.md`. Full reports: `~/.claude/proj
 - **History byte budget:** history is capped at 100,000 visits, but a long forged visit stream (about 500 MB) can still
   fill a small storage quota; add a byte budget.
 - HolyWisp systemd units verified statically only (no real systemd boot); arm64 binaries ran only under QEMU user-mode.
+- **Blocker rows over the epoxy transport (not the default; Wave B step 3 gate, 2026-11-23):** with
+  `E2E_BLOCKER_TRANSPORT=epoxy`, these `blocker-network` rows fail on every run: N11 (the allowlisted page never
+  reports), N14 (a blocked `fetch()` and XHR never settle) and N15 in both engines, and N13b and N16 under Ultraviolet.
+  In Firefox, N7 and N9 also time out and `blocker-uv` V1 and V2 fail. Over libcurl every row passes. Not yet diagnosed.
+  Epoxy sends absolute-form request targets, and the fixture now accepts them for WebSockets (that fixed N10).
+- **Wave C open points (WAVE-C §15; integration step 2026-11-23).** Later waves: O1 syncing game favorites and
+  recently played (a sync kind, endpoint, core migration, adapter and Account-panel switch; with the per-account
+  quota above); O4 VPN locations for some accounts only (a per-profile access rule at mint time); O9 resizing or
+  converting thumbnails; O11 approving developer embed hosts from the admin page; O15 passing consent to the networks
+  (needs a real consent tool); O16 old-route connections after a location change (per-route epoch). Wave D: O2 a
+  dedicated games origin (third hostname, certificate, server role); O3 Raspberry Pi 4 measurements of the games and
+  VPN budgets. Operator runs: O7 a real VPN tunnel end to end (`services/vpn/README.md` "Verify"; `[unproven]`); O6 a
+  provider's public check page only with that provider's permission. Revisit: O8 GitHub archive stability (no
+  archive checksum pinned); O10 the three CDN-dependent OSS games (a manifest review); O14 telling a dead tunnel from a
+  refused check service. Product decisions: O5 ad-related features in the app's `Permissions-Policy`. No action: O12
+  itch.io widgets and Y8 embeds (link-out stays), O13 Firefox ignoring most of `Permissions-Policy` (About says so).
+- **Wave C rows not written yet (c-wire, 2026-11-23; `registerFeature` landed before them; `c-review-fix` then wrote
+  V5, V6, V7's import part, V9, V11, V12, V15 and P12, green in both browsers):** `vpn-ui` V7's sync part (two browser
+  contexts with accounts), V15's variant with the `startVpn` chunk delayed and V21's host-attack part with its 20 s
+  close (cargo `wisp_tickets.rs` covers the close and the restart); `games-ui` U5, U7, U9, U12, U13; `games-player`
+  P6, P9 (P7 checks two POSTs, not that the second is left uncounted); B17's warnings for accounts / code mode / no check service and B13's
+  sentinel probe set. The frontend lane's open items: `EXPECTED_CLEARERS` does not list
+  `gamesNetworks`; link-out tiles open the detail page rather than the source; `schema.ts`'s `vpn.*` comments still
+  say "check exit IP via the proxy path" (ARCHITECTURE §5.3 has the new wording).
+- **Wave C final step findings (`c-review-fix`, `c-finish`, 2026-11-24):** the VPN page says "Connected" while a
+  location's health is still `unknown` (§7.2's table allows it, D13 asks for `up`: a plan conflict to settle); the
+  w2 superseded check compares whole seconds, and once 8192 sessions are tracked the oldest is evicted, which makes
+  that session's older direct-route tickets valid again `[unproven]`. With more than one `GNOME_PUBLIC_ORIGINS` entry
+  the engine host says hello to every app origin (it cannot read its parent's origin), so each origin but the
+  parent's logs a `postMessage` target-origin warning (Chromium) or error (Firefox) on `/browse`: console noise only,
+  seen in `visual-qa` against the Vite dev server; Chromium's `location.ancestorOrigins` could narrow it.
+- **Wave C scale findings (online run 2026-11-23):** with the full GamePix catalog (15,722 listed) the "All games"
+  grid stops silently at `CatalogView`'s 15,000-item cap (A–Z ends at "Virology"; 722 games reachable only through
+  search, categories or other sorts; About's limitations say so since 2026-11-24): show that the list was cut, or
+  page past the cap with a window. The first page of
+  "All games" is requested twice when `/games?sort=az` opens (one duplicate request, de-duplicated by id). Firefox's
+  scroll frame times (p95 33.5 ms, max 67 ms) are twice Chromium's.
+- **Wave C OSS findings (online run 2026-11-23, both browsers):** `javascript-racer` throws an unhandled
+  `play()` rejection (its music autoplays before any click inside the game frame; the game renders and plays);
+  `bullethell` (isolated: opaque origin) cannot load its own font (CORS: the `/oss/` answers carry no
+  `Access-Control-Allow-Origin`), so it falls back to a system font. Neither stops the game; decide whether to give
+  isolated entries' fonts an `Access-Control-Allow-Origin: *` or accept the fallback.
 
 ## Decisions log
 | Date | Decision | Why |
@@ -399,3 +554,10 @@ Each item needs an owner lane in `docs/WAVE-B.md`. Full reports: `~/.claude/proj
 | 2026-11-19 | **Wave D D19 — cookie flood across the origin boundary**: sibling hostnames stay the supported default and gnome-server tolerates the flood (1 MiB heads only from trusted proxies, cookie hygiene in the app); a separate registrable domain stays an option, never the default | The deferred Wave D decision, with evidence rows CF1–CF7 |
 | 2026-11-19 | **Wave D D20 — per-account sync storage quota**: `GNOME_SYNC_QUOTA_MB` (default 64), exact via SQLite triggers, 413 `quota_exceeded`, history trimming, a usage endpoint, bookmark paging | The deferred quota, history byte budget and bookmark paging items |
 | 2026-11-19 | **Wave D D23–D26 — secrets from files, audits, Raspberry Pi 4, budgets**: `_FILE` twins for the three secrets; `scripts/audit.sh` (cargo deny + npm audit, shipped vs build-only); 64-bit Pi OS only, arm64 cross-compiled and run under QEMU user-mode only where no host change is needed; budgets in `scripts/budgets.json`, report-only until baseline-1 | Operations hygiene; nothing claimed for hardware that was not measured |
+| 2026-11-21 | **Wave B step 3 as built.** D1: one @ghostery/adblocker 2.20.3 engine per list group, built in a module Worker on the proxy origin. D5: `allowlist` and `perSite` travel scoped: only sites shown or about to load, through `tab.loading {url}` answered by a snapshot; at most 20 newly exposed rule-bearing sites per tab per minute and 120 per app page per hour; paused after two compromise signals. `cookieRules` travel whole while the cookie manager is on. D6: the cached set is MAC'd under the app's random `blockerKey` (IndexedDB `blocker:key:v1`, never synced). The key is replaced when site data is cleared, at a start with a pending clear-on-exit and after a compromise signal. D17: file lists are read by the `filters.files` job (at start, every 10 min and on every forced refresh); errors are fixed `file-*` words; the public listing never shows a path; on Linux the opened file is re-checked against /proc, /sys and /dev | Final wording of the WAVE-B3 §1 decisions, checked by the lane reviews and the integration |
+| 2026-11-21 | **D19 superseded: `blocker` is offered in every build.** The e2e switch `GNOME_ENGINE_TEST_CAPABILITIES` is removed, and `registerFeature('extensions')` runs unconditionally after `browser` | The §12.4 matrix passed in every cell, apart from the expectFail rows About lists |
+| 2026-11-21 | **Step 3 lane decisions.** CORS is not emulated (a measured limitation, stated in About, ENGINE-PROTOCOL §1.1 and the README). Ultraviolet gets SameSite by Chromium's rules (Lax by default, None without Secure = Lax, Lax+POST 2 min) through `gnome-blocker-context.inits`, in both browsers; Scramjet keeps its own. Cookie-acceptance rules and the Referer floor also apply with the cookie manager or privacy protection off. `frameElement` is wrapped only in a document's own realm. `validateSelectors` keeps root/body `:style()` rules that only restore the page. Shield and Extensions texts come only from C5b codes and GNOME's own listing | Lanes x1–x4 and the integration (reports in session 6's `handoff/reports/b3-*.json`) |
+| 2026-11-21 | **Step-2 findings, final states.** F1 fixed in step 2. F2 measured and open: A0 is expectFail in all four cells (borrow-parent, a child realm's native `frameElement` getter, Scramjet's client global); About lists it. F3–F6 fixed by x1: engine hosts registered by client id; UV pushState/replaceState origin check; Cookie Store API removed in UV realms; `isTrusted` checked on the CSP and navigate listeners. Upstream reports to file: Ghostery adblocker (JSON-encode scriptlet arguments, enforce `requiresTrust`, stylesheet injection through a `{` in a selector, json-prune and `Response.json`); Scramjet (hide the client global, honour Referrer-Policy and `<meta name=referrer>`, SecurityError on cross-origin pushState); Ultraviolet (about:blank children seeded with the parent's cookie string, unused `__uv$referrer`, cookie serialization ignores path/Secure/SameSite, bare-mux client in an unhooked realm bypasses WebSocket hooks) | WAVE-B3 §11.2, closed by step 3 |
+| 2026-11-23 | **Wave C as built (games).** D2/D4: every game is framed through `/play-frame/<slug>` (no script, `frame-src` = exactly that game's embed origin); the shell keeps `frame-src blob: <proxy origin>` (step 3's `blob:` stays) and gets `frame-ancestors 'none'` + `X-Frame-Options: DENY`. D3: COOP `same-origin` and the deny-list `Permissions-Policy` on app HTML only. D5/D6: five reviewed OSS entries enabled (2048, javascript-racer, javascript-breakout, bullethell isolated, clumsy-bird); a-dark-room, hextris, hexgl disabled by review (hexgl: CC BY-NC headers beside its MIT LICENSE, the safer reading), particle-clicker, javascript-chess, a-blast disabled for CDN code; `/oss` and `/play-frame` are reserved prefixes (JSON 404, never the SPA); OSS documents get `connect-src 'self'` without `blob:`. D21: `Module::prepare` before jobs and listeners. The `catalog` CLI needs the server's binds (`oss` counts as disabled without a proxy origin) | Lane reports c-backend, c-frontend, c-wire; WAVE-C §1 |
+| 2026-11-23 | **Wave C as built (VPN).** D23: `w2.<exp_s>.<iat_s>.<route>.<session_ref>.<mac>`, `w1` refused, 401 `wisp_ticket_wrong_route` / `_stale` / `_superseded`, the 15 s re-check closes superseded default-route connections; a mint batch never mixes routes. D15: no check service by default (`verify_url: null`); "Check this browser's exit" is shown only when a check service is set. D17: Automatic pinned per app page. `registerFeature('vpn')` is the last step of `startVpn()` and `registerFeature('games')` of the games start, before every V/U/P row was written (the unwritten rows are in Deferred items) | c-wire report; the rows that exist pass in both browsers |
+| 2026-11-23 | **Wave C plan conflicts settled by the integration step.** (1) §10's Games text "playing tells the network this server's address": the README says both facts — the network and its advertisers see the visitor's IP address (D24; embeds are never proxied), and the frames send the server's origin as the referrer (`strict-origin-when-cross-origin`); the Settings text keeps c-wire's "your IP address". (2) B18 vs §4.6: the first `catalog.import` tick scans the local `oss` source even with `GNOME_CATALOG_REFRESH_HOURS=0`; B18 asserts only that no feed ran and nothing was fetched. (3) `backend/tests/holywisp_e2e.rs`'s ignored profile-path test still minted a direct-route ticket (a wrong row since D23): fixed to mint for the profile route and a fresh direct ticket after it | WAVE-C §10, §4.6, §8.1 |

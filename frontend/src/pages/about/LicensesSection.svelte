@@ -112,7 +112,7 @@
     id="licenses"
     variant="title"
     title="Open-source licenses"
-    description={`GNOME is built on ${componentCount} open-source components and ${RUST_CRATES.length} Rust crates. Thank you to everyone who made them.`}
+    description={`GNOME is built on ${componentCount} open-source components and ${RUST_CRATES.length} Rust crates. Thank you to everyone who made them. Open-source games are not part of GNOME: each keeps its own license, shown on its own game page.`}
   />
 
   {#each shipped as group (group.id)}

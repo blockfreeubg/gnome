@@ -73,7 +73,7 @@ describe('chooseRoute (ENGINE-PROTOCOL §4, §6.6)', () => {
       x.vpn.killSwitch = true;
     });
     const c = ctx({ config: config({ custom_servers: true }), vpnStatus: { 'se-got': 'down' } });
-    expect(chooseRoute(s, c)).toEqual({ route: { kind: 'profile', id: 'se-got' }, vpnFellBack: false, customIgnored: 'vpn' });
+    expect(chooseRoute(s, c)).toEqual({ route: { kind: 'profile', id: 'se-got' }, vpnFellBack: false, customIgnored: 'vpn', autoPicked: null });
     // Kill switch off and the location down: the default route, and the app says so.
     const off = settingsWith((x) => {
       x.vpn.mode = 'gateway';
@@ -106,6 +106,42 @@ describe('chooseRoute (ENGINE-PROTOCOL §4, §6.6)', () => {
     expect(chooseRoute(s, ctx({ config: config({ profiles: [] }) })).route).toEqual({ kind: 'profile', id: NO_VPN_LOCATION });
     // Without a chosen location the first offered one is used.
     expect(chooseRoute(s, ctx()).route).toEqual({ kind: 'profile', id: 'se-got' });
+  });
+
+  it('Automatic (D17): the pinned one while not down, else the first one up, else the first offered; a chosen one is never replaced', () => {
+    const three = config({ profiles: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }] } as Partial<ServerConfig['wisp']>);
+    const auto = (killSwitch: boolean): Settings =>
+      settingsWith((x) => {
+        x.vpn.mode = 'gateway';
+        x.vpn.preferredLocation = null;
+        x.vpn.killSwitch = killSwitch;
+      });
+    for (const ks of [true, false]) {
+      // First one up, skipping a down one.
+      expect(chooseRoute(auto(ks), ctx({ config: three, vpnStatus: { a: 'down', b: 'up', c: 'up' } }))).toMatchObject({ route: { kind: 'profile', id: 'b' }, autoPicked: 'b' });
+      // Pinned and not down: kept, even when an earlier one is up again.
+      expect(chooseRoute(auto(ks), ctx({ config: three, vpnStatus: { a: 'up', b: 'up', c: 'up' }, autoPinned: 'c' })).route).toEqual({ kind: 'profile', id: 'c' });
+      expect(chooseRoute(auto(ks), ctx({ config: three, vpnStatus: { c: 'unknown' }, autoPinned: 'c' })).route).toEqual({ kind: 'profile', id: 'c' });
+      // Pinned and down: moves to the first one up.
+      expect(chooseRoute(auto(ks), ctx({ config: three, vpnStatus: { a: 'down', b: 'up', c: 'down' }, autoPinned: 'c' }))).toMatchObject({ route: { kind: 'profile', id: 'b' }, autoPicked: 'b' });
+      // Pinned but no longer offered: the first one up.
+      expect(chooseRoute(auto(ks), ctx({ config: three, vpnStatus: { b: 'up' }, autoPinned: 'gone' })).route).toEqual({ kind: 'profile', id: 'b' });
+      // None up: the first offered (unknown statuses count as not up).
+      expect(chooseRoute(auto(ks), ctx({ config: three, vpnStatus: {} })).route).toEqual({ kind: 'profile', id: 'a' });
+    }
+    // All down: the kill switch blocks on the first offered one; without it the default route.
+    const down = { a: 'down', b: 'down', c: 'down' } as const;
+    expect(chooseRoute(auto(true), ctx({ config: three, vpnStatus: down })).route).toEqual({ kind: 'profile', id: 'a' });
+    expect(chooseRoute(auto(false), ctx({ config: three, vpnStatus: down }))).toMatchObject({ route: { kind: 'default' }, vpnFellBack: true, autoPicked: null });
+    // A chosen location is never replaced by another one that is up.
+    const chosen = (killSwitch: boolean): Settings =>
+      settingsWith((x) => {
+        x.vpn.mode = 'gateway';
+        x.vpn.preferredLocation = 'a';
+        x.vpn.killSwitch = killSwitch;
+      });
+    expect(chooseRoute(chosen(true), ctx({ config: three, vpnStatus: { a: 'down', b: 'up' }, autoPinned: 'b' }))).toMatchObject({ route: { kind: 'profile', id: 'a' }, autoPicked: null });
+    expect(chooseRoute(chosen(false), ctx({ config: three, vpnStatus: { a: 'down', b: 'up' } }))).toMatchObject({ route: { kind: 'default' }, vpnFellBack: true });
   });
 });
 

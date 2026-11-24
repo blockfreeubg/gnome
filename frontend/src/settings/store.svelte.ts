@@ -17,6 +17,7 @@ import { idbGet, idbPut, type StoredSettings } from '../lib/idb';
 import { computeAppearance, type BootPayload } from './apply';
 import { createDefaultSettings, DEFAULT_SETTINGS } from './defaults';
 import { withLocalPicture } from './local-picture';
+import { withLocalVpn } from './local-vpn';
 import { CURRENT_SETTINGS_VERSION, SETTINGS_SECTIONS, type Settings, type SettingsSection } from './schema';
 import {
   deepEqual,
@@ -209,12 +210,16 @@ class SettingsStore {
    * Parses and, if valid, applies an exported settings file. Returns the result for the UI to report. The `account`
    * section (which sync switches are on) is device-local, as in account sync: a file never turns sync — in
    * particular history sync — on or off in this browser. Neither does a home background picture the file only
-   * references (pictures stay in the browser they were uploaded to).
+   * references (pictures stay in the browser they were uploaded to), nor this browser's `vpn.mode` and
+   * `vpn.killSwitch` (device-local, docs/WAVE-C.md D12).
    */
   import(text: string): ImportResult {
     const result = parseSettingsImport(text);
     if (result.ok) {
-      const next = withLocalPicture(result.settings, this.#value.appearance.homeBackground);
+      const next = withLocalVpn(withLocalPicture(result.settings, this.#value.appearance.homeBackground), {
+        mode: this.#value.vpn.mode,
+        killSwitch: this.#value.vpn.killSwitch,
+      });
       this.replace({ ...next, account: this.#value.account }, 'import');
     }
     return result;

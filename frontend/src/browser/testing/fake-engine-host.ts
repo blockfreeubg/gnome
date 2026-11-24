@@ -24,6 +24,8 @@ import {
   type EventType,
   type InitResult,
   type TabState,
+  type Capability,
+  type VpnVerifyResult,
 } from '../../shared/engine-protocol';
 import type { ConnectMessage } from '../../shared/engine-protocol';
 import type { EngineEmbedder, EngineFrame, WindowMessage } from '../engine/client';
@@ -119,6 +121,11 @@ export class FakeEngineHost implements EngineEmbedder {
   blockerStats: BlockerStats | null = null;
   /** blocker.reload calls (each starts a "build": the status goes to `building`). */
   reloads = 0;
+  /**
+   * What `vpn.verify` answers (WAVE-C §8.1): a result, or an error the command fails with. null = the capability is
+   * not offered (`unsupported`); set before `init` so `vpnVerify` is among the capabilities.
+   */
+  vpnVerify: VpnVerifyResult | { code: string; message: string } | null = null;
   /** The jar `cookies.list` reports and `cookies.delete` edits. */
   cookies: CookieInfo[] = [];
   #navId = 0;
@@ -272,8 +279,9 @@ export class FakeEngineHost implements EngineEmbedder {
     switch (msg.type) {
       case 'init': {
         if (this.#opts.initResult) return this.#opts.initResult(this.instance);
-        if (!this.#opts.blocker) return fakeInitResult(this.instance);
-        return fakeInitResult(this.instance, { status: this.#status(), capabilities: ['zoom', 'print', 'selectAll', 'cookies', 'siteData', 'blocker'] });
+        const verify: Capability[] = this.vpnVerify ? ['vpnVerify'] : [];
+        if (!this.#opts.blocker) return fakeInitResult(this.instance, verify.length ? { capabilities: ['zoom', 'print', 'selectAll', ...verify] } : {});
+        return fakeInitResult(this.instance, { status: this.#status(), capabilities: ['zoom', 'print', 'selectAll', 'cookies', 'siteData', 'blocker', ...verify] });
       }
       case 'settings':
       case 'ticket':
@@ -362,9 +370,12 @@ export class FakeEngineHost implements EngineEmbedder {
         if (!this.#opts.blocker) throw { code: 'unsupported', message: 'not offered by the fake' };
         if (msg.p.kinds.includes('cookies')) this.cookies = [];
         return {};
+      case 'vpn.verify':
+        if (!this.vpnVerify) throw { code: 'unsupported', message: 'not offered by the fake' };
+        if ('code' in this.vpnVerify) throw this.vpnVerify;
+        return { ...this.vpnVerify };
       case 'diagnostics':
       case 'suggest':
-      case 'vpn.verify':
         throw { code: 'unsupported', message: 'not offered by the fake' };
     }
   }

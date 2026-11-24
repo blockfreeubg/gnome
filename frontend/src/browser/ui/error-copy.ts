@@ -21,9 +21,23 @@ export interface ErrorCopy {
   glyph: ErrorGlyph;
   title: string;
   body: string;
+  /** On the profile route (WAVE-C §8.1): the overlay offers an **Open VPN page** link (a gesture in GNOME's UI). */
+  vpnLink: boolean;
+  /** While the server's last exit check of that location failed: "The exit check through <label> fails too." */
+  exitLine: string | null;
 }
 
-export function errorCopy(error: Pick<TabError, 'kind'> & Partial<Pick<TabError, 'detail'>>, ctx: { host: string; vpn: VpnFacts | null; killSwitch: boolean; engine: string }): ErrorCopy {
+export function errorCopy(
+  error: Pick<TabError, 'kind'> & Partial<Pick<TabError, 'detail'>>,
+  ctx: { host: string; vpn: VpnFacts | null; killSwitch: boolean; engine: string; exitFails?: boolean },
+): ErrorCopy {
+  const c = baseCopy(error, ctx);
+  const vpn = ctx.vpn;
+  const exitLine = vpn && ctx.exitFails && vpn.label ? `The exit check through ${vpn.label} fails too.` : null;
+  return { ...c, vpnLink: vpn !== null, exitLine };
+}
+
+function baseCopy(error: Pick<TabError, 'kind'> & Partial<Pick<TabError, 'detail'>>, ctx: { host: string; vpn: VpnFacts | null; killSwitch: boolean; engine: string }): Omit<ErrorCopy, 'vpnLink' | 'exitLine'> {
   const { host, vpn } = ctx;
   if (vpn && (error.kind === 'gateway' || error.kind === 'network') && (vpn.status === 'down' || vpn.status === 'gone' || vpn.status === 'none')) {
     const locked = ctx.killSwitch ? ' The kill switch keeps pages off every other route until it is back.' : '';

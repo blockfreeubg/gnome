@@ -140,6 +140,9 @@ export async function startStack({ runDir, log }) {
       GNOME_REGISTRATION: 'open',
       GNOME_ARGON2_MEMORY_KIB: '8192',
       GNOME_FILTERS_REFRESH_HOURS: '0',
+      // No live game-feed import and no OSS download from GitHub (WAVE-C §2.2).
+      GNOME_CATALOG_REFRESH_HOURS: '0',
+      GNOME_OSS_FETCH: 'manual',
       GNOME_LOG: 'warn',
       ...extra,
     };

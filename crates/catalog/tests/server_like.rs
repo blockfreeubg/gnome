@@ -76,9 +76,9 @@ async fn spawned_import_through_a_server_shaped_writer() {
     reader.execute_batch("PRAGMA query_only = ON;").unwrap();
     let page = cat.list(&reader, &ListQuery::default()).unwrap();
     assert_eq!(page.total, 29);
-    let sections = cat.sections(&reader, 24).unwrap();
+    let sections = cat.sections(&reader, 24, &Default::default()).unwrap();
     assert_eq!(sections.popular.len(), 24);
-    let detail = cat.game(&reader, &page.items[0].slug, 6).unwrap().unwrap();
+    let detail = cat.game(&reader, &page.items[0].slug, 6, &Default::default()).unwrap().unwrap();
     assert_eq!(detail.related.len(), 6);
     assert!(cat.stats(&reader).unwrap().last_import.is_some());
 }

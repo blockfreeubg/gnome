@@ -46,7 +46,7 @@ use tracing::Instrument as _;
 use self::caps::{CapExceeded, Caps};
 use self::health::{DIRECT, PROBE_INTERVAL, Upstream, Upstreams};
 use self::relay::RelayCounters;
-use self::ticket::{SessionRef, Ticket, TicketError, TicketKey};
+use self::ticket::{SessionRef, Ticket, TicketError, TicketKey, TicketRoute};
 use self::upstream::{ForwardedUpgrade, UpstreamError};
 use crate::api::meta::UpstreamStatus;
 use crate::auth::cookies::{self, SessionCookie};
@@ -225,10 +225,47 @@ impl SessionCache {
     }
 }
 
+/// The latest profile-route ticket mint per session (D23): default-route tickets minted before it are refused.
+/// Entries expire with the tickets they supersede (mint time + the ticket TTL); bounded like [`SessionCache`].
+#[derive(Debug, Default)]
+struct ProfileMints {
+    entries: Mutex<HashMap<SessionRef, (u64, u64)>>,
+}
+
+impl ProfileMints {
+    fn record(&self, r: SessionRef, issued_at_s: u64, ttl_s: u64) {
+        let now = now_s();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.len() >= SESSION_CACHE_MAX && !entries.contains_key(&r) {
+            entries.retain(|_, (_, until)| *until > now);
+            // Still full: drop the oldest mint (its default-route tickets are the closest to expiring anyway).
+            if entries.len() >= SESSION_CACHE_MAX
+                && let Some(oldest) = entries.iter().min_by_key(|(_, (iat, _))| *iat).map(|(k, _)| *k)
+            {
+                entries.remove(&oldest);
+            }
+        }
+        let until = issued_at_s.saturating_add(ttl_s);
+        let e = entries.entry(r).or_insert((issued_at_s, until));
+        if issued_at_s >= e.0 {
+            *e = (issued_at_s, until);
+        }
+    }
+
+    /// Whether a default-route ticket of `r` minted at `issued_at_s` is superseded by a later profile-route mint.
+    fn supersedes(&self, r: SessionRef, issued_at_s: u64) -> bool {
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries.get(&r).is_some_and(|(latest, until)| *until > now_s() && issued_at_s < *latest)
+    }
+}
+
 /// Gateway state, published with [`ModuleSetup::provide`] (`state.ext::<Gateway>()`).
 pub struct Gateway {
     pub upstreams: Upstreams,
     tickets: TicketKey,
+    /// Unix seconds when this process's gateway was built: tickets minted before are refused (D23).
+    started_s: u64,
+    profile_mints: ProfileMints,
     caps: Caps,
     sessions: SessionCache,
     pub stats: GatewayStats,
@@ -256,6 +293,8 @@ impl Gateway {
         Self {
             upstreams: Upstreams::new(list),
             tickets: TicketKey::new(&state.secret, c.access_mode, c.access_code.as_ref()),
+            started_s: now_s(),
+            profile_mints: ProfileMints::default(),
             caps: Caps::new(c.max_ws_per_ip, c.max_ws_per_session),
             sessions: SessionCache::new(options.session_check),
             stats: GatewayStats::default(),
@@ -268,9 +307,16 @@ impl Gateway {
         self.zero_copy.is_ok()
     }
 
-    /// Mint a ticket (exposed for tests and tools; the HTTP endpoint applies the access rules first).
+    /// Mint a default-route ticket now (exposed for tests and tools; the HTTP endpoint applies the access rules
+    /// first).
     pub fn mint(&self, session_ref: SessionRef, expires_at_s: u64) -> String {
-        self.tickets.mint(session_ref, expires_at_s)
+        self.mint_for(session_ref, &TicketRoute::Default, expires_at_s)
+    }
+
+    /// Mint a ticket for `route` now. Exposed for tests; unlike the HTTP endpoint it does not record a profile-route
+    /// mint (so it supersedes nothing).
+    pub fn mint_for(&self, session_ref: SessionRef, route: &TicketRoute, expires_at_s: u64) -> String {
+        self.tickets.mint(session_ref, route, now_s(), expires_at_s)
     }
 
     fn refuse(&self, why: Reject, err: ApiError) -> Response {
@@ -281,12 +327,29 @@ impl Gateway {
 
     /// Check the request's ticket. Read-only: nothing is minted, extended or consumed (tickets are stateless); in
     /// `accounts` mode the session lookup only fills the [`SessionCache`].
-    async fn verify_ticket(&self, state: &AppState, query: Option<&str>) -> Result<Ticket, (Reject, ApiError)> {
+    async fn verify_ticket(
+        &self,
+        state: &AppState,
+        query: Option<&str>,
+        route: &TicketRoute,
+    ) -> Result<Ticket, (Reject, ApiError)> {
         let raw = ticket_param(query).map_err(|p| (Reject::Ticket, p.error()))?;
         let t = self.tickets.verify(&raw, now_s()).map_err(|e| {
             let code = if e == TicketError::Expired { TICKET_EXPIRED } else { TICKET_INVALID };
             (Reject::Ticket, ApiError::new(StatusCode::UNAUTHORIZED, code, e.message()))
         })?;
+        let refuse = |code: &'static str, msg: &'static str| {
+            Err((Reject::Ticket, ApiError::new(StatusCode::UNAUTHORIZED, code, msg)))
+        };
+        if t.route != *route {
+            return refuse(TICKET_WRONG_ROUTE, "this Wisp ticket was minted for another route");
+        }
+        if t.issued_at_s < self.started_s {
+            return refuse(TICKET_STALE, "this Wisp ticket was minted before the server restarted");
+        }
+        if t.route == TicketRoute::Default && self.profile_mints.supersedes(t.session_ref, t.issued_at_s) {
+            return refuse(TICKET_SUPERSEDED, "this session uses a VPN location now; the direct-route ticket is void");
+        }
         if state.config.access_mode == AccessMode::Accounts {
             let live = self.sessions.live(state, t.session_ref).await.map_err(|e| (Reject::SessionEnded, e))?;
             if !live {
@@ -309,8 +372,8 @@ impl Gateway {
     /// `426`. No `Origin` is required (a same-origin `fetch` GET carries none) because nothing is opened: the probe
     /// takes no connection slot, never contacts the upstream itself (a `503` may ask the health job for an early
     /// round, at most every 10 s) and changes no ticket state.
-    async fn probe(&self, state: &AppState, upstream: &Upstream, query: Option<&str>) -> Response {
-        match self.verify_ticket(state, query).await {
+    async fn probe(&self, state: &AppState, upstream: &Upstream, query: Option<&str>, route: &TicketRoute) -> Response {
+        match self.verify_ticket(state, query, route).await {
             Ok(_) if upstream.status().0 == UpstreamStatus::Down => {
                 self.stats.probes[2].fetch_add(1, Ordering::Relaxed);
                 if self.upstreams.claim_early_probe() {
@@ -353,8 +416,9 @@ impl Gateway {
         let Some(upstream) = upstream else {
             return self.refuse(Reject::UnknownProfile, ApiError::not_found());
         };
+        let route = profile.clone().map_or(TicketRoute::Default, TicketRoute::Profile);
         if is_probe(&req) {
-            return self.probe(&state, &upstream, req.uri().query()).await;
+            return self.probe(&state, &upstream, req.uri().query(), &route).await;
         }
         let forwarded = match forwarded_upgrade(&req) {
             Ok(mut f) => {
@@ -374,7 +438,7 @@ impl Gateway {
         if let Err(e) = check_origin(&state, &client, req.headers()) {
             return self.refuse(Reject::Origin, e);
         }
-        let ticket = match self.verify_ticket(&state, req.uri().query()).await {
+        let ticket = match self.verify_ticket(&state, req.uri().query(), &route).await {
             Ok(t) => t,
             Err((why, e)) => return self.refuse(why, e),
         };
@@ -424,7 +488,11 @@ impl Gateway {
         // `accounts` mode: the ticket's user session is checked again while the connection is open, so signing out
         // (or a password change revoking other sessions) also ends connections opened before, e.g. with a ticket a
         // hostile proxied page copied.
-        let watch = (state.config.access_mode == AccessMode::Accounts).then(|| (state.clone(), ticket.session_ref));
+        let accounts = (state.config.access_mode == AccessMode::Accounts).then(|| state.clone());
+        // A default-route connection is also checked against later profile-route mints (D23): once the session
+        // connected to a VPN location, its direct-route connections close at the next check.
+        let direct = ticket.route == TicketRoute::Default;
+        let (session_ref, issued_at_s) = (ticket.session_ref, ticket.issued_at_s);
         state.tasks.spawn(
             async move {
                 let _slot = slot;
@@ -444,12 +512,19 @@ impl Gateway {
                     tokio::time::sleep(SHUTDOWN_GRACE).await;
                 };
                 let session_ended = async {
-                    let Some((state, session_ref)) = &watch else { return std::future::pending().await };
+                    if accounts.is_none() && !direct {
+                        return std::future::pending().await;
+                    }
                     loop {
                         tokio::time::sleep(gw.sessions.ttl).await;
+                        if direct && gw.profile_mints.supersedes(session_ref, issued_at_s) {
+                            return "its ticket was superseded by a VPN-location ticket";
+                        }
                         // A database error keeps the connection: only a definite "not live" ends it.
-                        if let Ok(false) = gw.sessions.live(state, *session_ref).await {
-                            return;
+                        if let Some(state) = &accounts
+                            && let Ok(false) = gw.sessions.live(state, session_ref).await
+                        {
+                            return "its user session ended";
                         }
                     }
                 };
@@ -460,7 +535,7 @@ impl Gateway {
                         Err(e) => tracing::debug!(error = %e, secs = secs(), "Wisp connection ended with an error"),
                     },
                     () = grace => tracing::debug!(secs = secs(), "Wisp connection closed at shutdown"),
-                    () = session_ended => tracing::debug!(secs = secs(), "Wisp connection closed: its user session ended"),
+                    why = session_ended => tracing::debug!(secs = secs(), why, "Wisp connection closed"),
                 }
             }
             .instrument(span),
@@ -484,6 +559,12 @@ pub const TICKET_INVALID: &str = "wisp_ticket_invalid";
 pub const TICKET_EXPIRED: &str = "wisp_ticket_expired";
 /// Error code (401, `accounts` mode): the user session the ticket was minted for was revoked or expired.
 pub const TICKET_REVOKED: &str = "wisp_ticket_revoked";
+/// Error code (401, D23): the ticket was minted for another route than the URL's path.
+pub const TICKET_WRONG_ROUTE: &str = "wisp_ticket_wrong_route";
+/// Error code (401, D23): the ticket was minted before this server process started.
+pub const TICKET_STALE: &str = "wisp_ticket_stale";
+/// Error code (401, D23): a default-route ticket minted before the session's latest profile-route ticket.
+pub const TICKET_SUPERSEDED: &str = "wisp_ticket_superseded";
 
 /// Why the URL carries no usable ticket text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -641,6 +722,7 @@ async fn mint_ticket(
     client: ClientInfo,
     sink: Option<Extension<CookieSink>>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let now = now_s();
     let mut set_cookie = None;
@@ -670,6 +752,7 @@ async fn mint_ticket(
         }
     };
     enforce(&state, RateClass::WispTicket, client.ip, Some(rate_key))?;
+    let route = requested_route(&gw, &body)?;
     let expires_at_s = (now + u64::from(state.config.wisp_ticket_ttl_s)).min(session_expires_s);
     if expires_at_s <= now {
         return Err(ApiError::unauthorized("the session has expired"));
@@ -677,15 +760,41 @@ async fn mint_ticket(
     let origin = origins::proxy_origin(&state.config, &client)
         .ok_or_else(|| ApiError::bad_request("cannot tell which origin this request used (no Host header)"))?;
     let body = json!({
-        "ticket": gw.tickets.mint(session_ref, expires_at_s),
+        "ticket": gw.tickets.mint(session_ref, &route, now, expires_at_s),
         "expires_at": expires_at_s.saturating_mul(1000),
         "wisp_url": origins::websocket_url(&origin, "/wisp/"),
     });
+    if matches!(route, TicketRoute::Profile(_)) {
+        gw.profile_mints.record(session_ref, now, u64::from(state.config.wisp_ticket_ttl_s));
+    }
     let mut res = Json(body).into_response();
     if let Some(cookie) = set_cookie {
         res.headers_mut().append(header::SET_COOKIE, cookie);
     }
     Ok(res)
+}
+
+/// The route of a ticket request: no body, `{}` or `{"route": "default"}` = the direct route;
+/// `{"route": {"profile": "<id>"}}` = that VPN location (`422 validation_failed`, `fields.route`, when unknown).
+fn requested_route(gw: &Gateway, body: &[u8]) -> Result<TicketRoute, ApiError> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(TicketRoute::Default);
+    }
+    let value: Value = serde_json::from_slice(body).map_err(|_| ApiError::bad_request("the body is not valid JSON"))?;
+    let bad = |msg: &str| ApiError::invalid_field("route", msg);
+    let Some(obj) = value.as_object() else { return Err(ApiError::invalid_field("", "must be a JSON object")) };
+    match obj.get("route") {
+        None | Some(Value::Null) => Ok(TicketRoute::Default),
+        Some(Value::String(s)) if s == "default" => Ok(TicketRoute::Default),
+        Some(Value::Object(o)) if o.len() == 1 => match o.get("profile") {
+            Some(Value::String(id)) if id != DIRECT && gw.upstreams.get(id).is_some() => {
+                Ok(TicketRoute::Profile(id.clone()))
+            }
+            Some(Value::String(_)) => Err(bad("unknown VPN location")),
+            _ => Err(bad(r#"must be "default" or {"profile": "<id>"}"#)),
+        },
+        Some(_) => Err(bad(r#"must be "default" or {"profile": "<id>"}"#)),
+    }
 }
 
 async fn wisp_direct(State(state): State<AppState>, Ext(gw): Ext<Gateway>, req: Request) -> Response {
@@ -868,7 +977,7 @@ mod tests {
             AccessMode::Open,
             None,
         );
-        let t = key.mint(SessionRef([3; 16]), now_s() + 600);
+        let t = key.mint(SessionRef([3; 16]), &TicketRoute::Default, now_s(), now_s() + 600);
         let check = |q: String| ticket_param(Some(&q)).ok().and_then(|raw| key.verify(&raw, now_s()).ok());
         for q in [
             format!("t={t}"),

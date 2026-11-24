@@ -67,7 +67,8 @@ async fn index_with_inline_script_hash_csp() {
     let hashes = gnome_server::security::csp::inline_script_hashes(INDEX);
     assert_eq!(hashes.len(), 1);
     assert!(csp.contains(&format!("script-src 'self' 'wasm-unsafe-eval' {}", hashes[0])), "{csp}");
-    assert!(csp.contains("frame-ancestors 'self'"));
+    assert!(csp.contains("frame-ancestors 'none'"));
+    assert_eq!(res.header("x-frame-options"), Some("DENY"));
     assert_eq!(res.header("x-content-type-options"), Some("nosniff"));
     assert_eq!(app.send(get("/index.html")).await.text(), INDEX);
 }
@@ -257,11 +258,11 @@ async fn special_files_and_types() {
 async fn csp_modes() {
     let ro = TestApp::with_static(&[("GNOME_CSP", "report-only")], site).await;
     let res = ro.send(get("/")).await;
-    assert_eq!(res.header("content-security-policy"), Some("frame-ancestors 'self'"));
+    assert_eq!(res.header("content-security-policy"), Some("frame-ancestors 'none'"));
     assert!(res.header("content-security-policy-report-only").unwrap().contains("script-src 'self'"));
     let off = TestApp::with_static(&[("GNOME_CSP", "off")], site).await;
     let res = off.send(get("/")).await;
-    assert_eq!(res.header("content-security-policy"), Some("frame-ancestors 'self'"));
+    assert_eq!(res.header("content-security-policy"), Some("frame-ancestors 'none'"));
     assert!(res.header("content-security-policy-report-only").is_none());
 }
 

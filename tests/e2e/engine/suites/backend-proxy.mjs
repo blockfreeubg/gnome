@@ -538,7 +538,16 @@ async function probe(ctx) {
     const context = await browser.newContext();
     const app = await context.newPage();
     await app.goto(`${stack.appOrigin}/api/health`);
-    const ticket = await app.evaluate(async () => (await (await fetch('/api/wisp/ticket', { method: 'POST', headers: { 'X-GNOME-Request': '1' } })).json()).ticket);
+    // Route-bound tickets (WAVE-C D23): one minted for the dead profile's route, then a default-route one (minted
+    // after it, so the profile mint does not supersede it).
+    const mint = (route) =>
+      app.evaluate(
+        async (r) =>
+          (await (await fetch('/api/wisp/ticket', { method: 'POST', headers: { 'X-GNOME-Request': '1', 'content-type': 'application/json' }, body: JSON.stringify({ route: r }) })).json()).ticket,
+        route,
+      );
+    const ticket = await mint({ profile: stack.deadProfile });
+    const directTicket = await mint('default');
     // The engine-host document (top level, so it does not start): the probe is a same-origin GET without Origin.
     const host = await context.newPage();
     await host.goto(`${stack.proxyOrigin}/engine/`);
@@ -565,7 +574,7 @@ async function probe(ctx) {
       result: down?.status === 503 && down.code === 'wisp_upstream_unavailable' && Number(down.retryAfter) > 0 ? 'pass' : 'fail',
       notes: `${JSON.stringify(down)} after ${Math.round((Date.now() - t0) / 1000)} s`,
     });
-    const direct = await probeAt('/wisp/', ticket);
+    const direct = await probeAt('/wisp/', directTicket);
     record({ test: 'probe: the direct route (upstream up) still answers 426', result: direct.status === 426 ? 'pass' : 'fail', notes: JSON.stringify(direct) });
     const bad = await probeAt(`/wisp/p/${stack.deadProfile}/`, 'w1.1.AAAAAAAAAAAAAAAAAAAAAA.x');
     record({ test: 'probe: a bad ticket on that route is still 401', result: bad.status === 401 && bad.code === 'wisp_ticket_invalid' ? 'pass' : 'fail', notes: JSON.stringify(bad) });

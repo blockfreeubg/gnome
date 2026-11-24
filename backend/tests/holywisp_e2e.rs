@@ -30,7 +30,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use futures_util::{SinkExt as _, StreamExt as _};
 use gnome_server::config::AccessMode;
-use gnome_server::gateway::ticket::{SessionRef, TicketKey};
+use gnome_server::gateway::ticket::{SessionRef, TicketKey, TicketRoute};
 use gnome_server::gateway::upstream::accept_key;
 use gnome_server::security::secret_key::SecretKey;
 use serde_json::Value;
@@ -247,13 +247,19 @@ impl Gnome {
         serde_json::from_str(out.split("\r\n\r\n").nth(1).unwrap()).unwrap()
     }
 
-    /// `POST /api/wisp/ticket` over HTTP on the app origin (creates the anonymous session).
+    /// `POST /api/wisp/ticket` over HTTP on the app origin (creates the anonymous session): a direct-route ticket.
     async fn ticket(&self) -> Value {
+        self.ticket_with("").await
+    }
+
+    /// `POST /api/wisp/ticket` with this JSON body (empty = no body, the direct route; D23 route-bound tickets).
+    async fn ticket_with(&self, body: &str) -> Value {
         let mut s = TcpStream::connect(self.public).await.unwrap();
         let req = format!(
             "POST /api/wisp/ticket HTTP/1.1\r\nHost: {0}\r\nOrigin: http://{0}\r\nX-Gnome-Request: 1\r\n\
-             Content-Length: 0\r\nConnection: close\r\n\r\n",
-            self.public
+             Content-Type: application/json\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n{body}",
+            self.public,
+            body.len()
         );
         s.write_all(req.as_bytes()).await.unwrap();
         let mut out = String::new();
@@ -381,9 +387,13 @@ async fn fetch_through_gateway_and_holywisp() {
     let key = TicketKey::new(&SecretKey::from_bytes(master.to_vec()).unwrap(), AccessMode::Open, None);
     let sref = SessionRef([1; 16]);
     let now = gnome_server::util::now_s();
-    let expired = key.mint(sref, now - 1);
-    let forged =
-        TicketKey::new(&SecretKey::from_bytes(vec![1; 32]).unwrap(), AccessMode::Open, None).mint(sref, now + 600);
+    let expired = key.mint(sref, &TicketRoute::Default, now - 10, now - 1);
+    let forged = TicketKey::new(&SecretKey::from_bytes(vec![1; 32]).unwrap(), AccessMode::Open, None).mint(
+        sref,
+        &TicketRoute::Default,
+        now,
+        now + 600,
+    );
     for (pq, want) in [
         (format!("/wisp/?t={ticket}&/"), (426, "upgrade_required")),
         (format!("/wisp/?t={ticket}/"), (426, "upgrade_required")),
@@ -528,8 +538,8 @@ async fn vpn_profile_path_wisp_v2_and_half_close() {
     assert_eq!((&ups[0]["id"], &ups[0]["status"]), (&"direct".into(), &"up".into()), "{ups}");
     assert_eq!((&ups[1]["id"], &ups[1]["status"]), (&"e2e-exit".into(), &"up".into()), "{ups}");
 
-    // 1. Real browsing through the profile path.
-    let t = gnome.ticket().await;
+    // 1. Real browsing through the profile path, with a ticket minted for that route (D23).
+    let t = gnome.ticket_with(r#"{"route":{"profile":"e2e-exit"}}"#).await;
     let ticket = t["ticket"].as_str().unwrap().to_string();
     let (ws, _) = gnome.wisp_at("/wisp/p/e2e-exit/", &ticket, "").await;
     let (io, close) = wisp_stream(ws, "example.org", 80).await;
@@ -546,8 +556,10 @@ async fn vpn_profile_path_wisp_v2_and_half_close() {
     assert!(exit.log().contains("blocked 127.0.0.1:81"), "{}", exit.log());
     assert!(!direct.log().contains("blocked 127.0.0.1:81"), "{}", direct.log());
 
-    // 3. Wisp v2: the subprotocol is relayed both ways and HolyWisp's INFO arrives first.
-    let (mut ws, head) = gnome.wisp_at("/wisp/", &ticket, "Sec-WebSocket-Protocol: wisp-v2\r\n").await;
+    // 3. Wisp v2: the subprotocol is relayed both ways and HolyWisp's INFO arrives first. The direct route needs a
+    //    direct-route ticket minted after the profile one (an older one is superseded, D23).
+    let direct_ticket = gnome.ticket().await["ticket"].as_str().unwrap().to_string();
+    let (mut ws, head) = gnome.wisp_at("/wisp/", &direct_ticket, "Sec-WebSocket-Protocol: wisp-v2\r\n").await;
     assert!(head.to_ascii_lowercase().contains("\r\nsec-websocket-protocol: wisp-v2\r\n"), "{head}");
     let first = next_frame(&mut ws).await.expect("a first frame");
     assert_eq!((first.0, first.1), (INFO, 0), "Wisp v2 starts with INFO on stream 0");
@@ -555,7 +567,7 @@ async fn vpn_profile_path_wisp_v2_and_half_close() {
     drop(ws);
 
     // 4. Half-close: FIN without a close frame. The relay passes it on, HolyWisp closes, the client sees the end.
-    let (mut ws, _) = gnome.wisp_at("/wisp/", &ticket, "").await;
+    let (mut ws, _) = gnome.wisp_at("/wisp/", &direct_ticket, "").await;
     assert_eq!(next_frame(&mut ws).await.expect("CONTINUE").0, CONTINUE);
     ws.get_mut().shutdown().await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async { while let Some(Ok(_)) = ws.next().await {} })
@@ -575,5 +587,5 @@ async fn vpn_profile_path_wisp_v2_and_half_close() {
     assert_eq!((ws_d["active"].as_i64(), ws_d["total"].as_u64()), (Some(0), Some(4)), "{ws_d}");
     assert_eq!((ws_d["clients"].as_u64(), ws_d["sessions"].as_u64()), (Some(0), Some(0)), "slots freed: {ws_d}");
     let log = gnome.stop().await;
-    assert!(!log.contains(&ticket), "the ticket is never logged");
+    assert!(!log.contains(&ticket) && !log.contains(&direct_ticket), "the ticket is never logged");
 }

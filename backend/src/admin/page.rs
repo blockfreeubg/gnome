@@ -225,6 +225,9 @@ pub fn render(d: &Diagnostics, refresh: Option<u32>) -> String {
     object_table(&mut out, "WebSocket gateway", get(d, &["ws"]));
     object_table(&mut out, "Upstreams", get(d, &["upstreams"]));
     object_table(&mut out, "Game catalog", get(d, &["catalog"]));
+    // Embed hosts (pending ones with their game counts), thumbnail cache, OSS builds (WAVE-C §4.4).
+    object_table(&mut out, "Games", get(d, &["games"]));
+    object_table(&mut out, "VPN exit checks", get(d, &["vpn"]));
     filters_table(&mut out, get(d, &["filters"]));
     object_table(&mut out, "Database", get(d, &["db"]));
     object_table(&mut out, "Static files", get(d, &["static"]));

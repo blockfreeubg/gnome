@@ -9,18 +9,20 @@ const TTL = 3_600_000;
 function setup(answer?: (n: number, interactive: boolean) => Promise<WispTicket>) {
   const clock = new ManualClock();
   const calls: boolean[] = [];
+  const routes: unknown[] = [];
   const times: number[] = [];
   const minter = new TicketMinter({
     clock,
     ttlMs: () => TTL,
-    mint: async ({ interactive }) => {
+    mint: async ({ interactive, route }) => {
       calls.push(interactive);
+      routes.push(route);
       times.push(clock.now());
       if (answer) return answer(calls.length, interactive);
       return { ticket: `w1.${calls.length}.abcdefgh`, expiresAt: clock.now() + TTL, wispUrl: 'ws://127.0.0.1:28002/wisp/', date: null };
     },
   });
-  return { clock, calls, times, minter };
+  return { clock, calls, routes, times, minter };
 }
 
 describe('TicketMinter (ENGINE-PROTOCOL §6.5)', () => {
@@ -131,5 +133,27 @@ describe('TicketMinter (ENGINE-PROTOCOL §6.5)', () => {
     await flush();
     expect(calls).toEqual([false, true]);
     expect((await a).ok && (await b).ok).toBe(true);
+  });
+
+  it('mints for the route asked; a batch never mixes routes and a newer route supersedes a pending one (WAVE-C D23)', async () => {
+    const { clock, routes, minter } = setup();
+    const a = minter.request(false, 'default');
+    // In flight for `default`; a profile request queues, and the in-flight waiters follow it (superseded).
+    const b = minter.request(false, { profile: 'e2e-vpn' });
+    await flush();
+    expect(routes).toEqual(['default']);
+    // A third request for yet another route supersedes the queued one.
+    const c = minter.request(false, { profile: 'e2e-vpn2' });
+    clock.advance(TICKET.appMinIntervalMs);
+    await flush();
+    expect(routes).toEqual(['default', { profile: 'e2e-vpn2' }]);
+    for (const o of [await a, await b, await c]) expect(o).toMatchObject({ ok: true, route: { profile: 'e2e-vpn2' } });
+    // Same route: coalesced with the mint in flight.
+    clock.advance(TICKET.appMinIntervalMs);
+    const d = minter.request(false, { profile: 'e2e-vpn2' });
+    const e = minter.request(false, { profile: 'e2e-vpn2' });
+    await flush();
+    expect(routes).toHaveLength(3);
+    expect((await d).ok && (await e).ok).toBe(true);
   });
 });

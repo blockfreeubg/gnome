@@ -247,12 +247,16 @@ async fn per_role_security_headers() {
         let router = app.public.clone();
         async move { send_to(&router, at(host, Method::GET, path), "203.0.113.10:40000".parse().unwrap()).await }
     };
-    // App shell: X-Frame-Options, the shell CSP framing only the proxy origin (the engine host: escaped code can
-    // navigate the engine iframe to anything frame-src allows), no WebSockets.
+    // App shell: nothing frames it (X-Frame-Options: DENY, frame-ancestors 'none'); the shell CSP frames only the
+    // proxy origin (the engine host: escaped code can navigate the engine iframe to anything frame-src allows) and
+    // 'self' (the game wrapper /play-frame/<slug>, WAVE-C D2), no WebSockets; COOP and Permissions-Policy (D3).
     let shell = send(HOST, "/").await;
-    assert_eq!(shell.header("x-frame-options"), Some("SAMEORIGIN"));
+    assert_eq!(shell.header("x-frame-options"), Some("DENY"));
+    assert_eq!(shell.header("cross-origin-opener-policy"), Some("same-origin"));
+    assert_eq!(shell.header("permissions-policy"), Some(gnome_server::security::csp::PERMISSIONS_POLICY));
     let csp = shell.header("content-security-policy").unwrap();
-    assert!(csp.contains(&format!("; frame-src blob: {PROXY_ORIGIN};")), "{csp}");
+    assert!(csp.contains(&format!("; frame-src blob: 'self' {PROXY_ORIGIN};")), "{csp}");
+    assert!(csp.ends_with("; frame-ancestors 'none'"), "{csp}");
     assert!(!csp.contains("gamedistribution") && !csp.contains("itch.io"), "{csp}");
     assert!(csp.contains("connect-src 'self';") && !csp.contains("ws:"), "isolated app opens no WebSockets: {csp}");
     // Engine host: the built-in engine-host policy (frame-ancestors = the app origin), then the operator's
@@ -530,8 +534,9 @@ async fn single_origin_headers() {
     let peer: std::net::SocketAddr = "203.0.113.10:40000".parse().unwrap();
     let shell = send_to(&app.public, at(HOST, Method::GET, "/"), peer).await;
     let csp = shell.header("content-security-policy").unwrap();
-    assert!(csp.contains("connect-src 'self' ws: wss:") && csp.contains("frame-ancestors 'self'"), "{csp}");
-    assert_eq!(shell.header("x-frame-options"), Some("SAMEORIGIN"));
+    assert!(csp.contains("connect-src 'self' ws: wss:") && csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert!(csp.contains("; frame-src blob: 'self';"), "{csp}");
+    assert_eq!(shell.header("x-frame-options"), Some("DENY"));
     let engine = send_to(&app.public, at(HOST, Method::GET, "/engine/"), peer).await;
     assert_eq!(
         csps(&engine),

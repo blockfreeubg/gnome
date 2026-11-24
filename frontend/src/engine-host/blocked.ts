@@ -200,6 +200,12 @@ export class WsMarks {
     this.#blocked.set(url, this.#now() + WsMarks.TTL_MS);
   }
 
+  /** Forgets every mark: the wrapper's verdicts no longer stand once the hooks in force change. */
+  clear(): void {
+    this.#allowed.clear();
+    this.#blocked.clear();
+  }
+
   /** The backstop's decision for a connect: 'blocked' (a block mark), 'skip' (an allow mark consumed) or 'judge'. */
   take(url: string): 'blocked' | 'skip' | 'judge' {
     this.#gc();

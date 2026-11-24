@@ -13,6 +13,12 @@ import type { RewriteParams } from './blocker';
  * that share UV's closure read nothing either.
  */
 export { UV_SCRIPT_COOKIE_DESTINATIONS, blankUvScriptCookies, verdictBlocksCookies } from '../cookies/provider';
+// Lane x3's Ultraviolet SameSite glue (sw.ts): UV's cookie serialization, fetch metadata and the opener's Referer.
+export { fixUvCookies, uvFetchMetadata, uvSameSiteRequest } from '../cookies/provider';
+export type { UvCookieContext } from '../cookies/provider';
+export { reduceReferrer } from '../privacy/provider';
+export { isThirdParty } from '../core/site';
+export { cookieRuleFor, cookiesBlocked, sitePolicy } from '../core/policy';
 
 export function swProviders(deps: { rewriteParams: RewriteParams }): HookProvider[] {
   return [createCookieProvider(), createPrivacyProvider({ rewriteParams: deps.rewriteParams })];

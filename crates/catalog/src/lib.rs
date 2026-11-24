@@ -49,8 +49,8 @@ pub use crate::fetch::{
 pub use crate::import::{ImportOptions, ImportReport};
 pub use crate::model::{EmbedKind, NewGame};
 pub use crate::query::{
-    CatalogStats, CategoryCount, GameDetail, GamePage, GameSummary, ImportRun, ListPage, ListQuery, Sections, Sort,
-    SourceStats, TagCount,
+    CatalogStats, CategoryCount, GameDetail, GamePage, GameSummary, ImportRun, ListFilter, ListPage, ListQuery,
+    MAX_EXCLUDE, Sections, Sort, SourceStats, TagCount,
 };
 pub use crate::source::Source;
 pub use crate::store::{AdminStatus, PlayOutcome};

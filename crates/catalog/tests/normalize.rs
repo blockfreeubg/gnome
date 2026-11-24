@@ -250,7 +250,23 @@ fn oss_manifest_entries() {
     let cfg = config(&[Source::Oss]);
     let m = sources::oss::load_manifest(&cfg.oss).unwrap();
     let enabled: Vec<_> = m.games.iter().filter(|e| e.importable(&cfg.oss)).collect();
-    assert_eq!(enabled.len(), 11);
+    // WAVE-C D5: every enabled entry carries the review of its pinned commit; the reviews left 5 of 11.
+    assert_eq!(enabled.len(), 5);
+    for e in m.games.iter().filter(|e| e.enabled) {
+        assert!(!e.local, "the built-in manifest has no local entry");
+        let reviewed = e.reviewed.as_deref().unwrap_or("");
+        assert!(
+            reviewed.len() > 12 && reviewed.as_bytes()[4] == b'-' && reviewed.contains(": "),
+            "{}: {reviewed:?}",
+            e.slug
+        );
+        assert!(e.servable(), "{}", e.slug);
+    }
+    for slug in ["particle-clicker", "javascript-chess", "a-blast"] {
+        let e = m.games.iter().find(|e| e.slug == slug).unwrap();
+        assert!(!e.enabled && e.notes.as_deref().unwrap().contains("no third-party loads"), "{slug}");
+    }
+    assert!(m.games.iter().find(|e| e.slug == "bullethell").unwrap().isolated);
     let ctx = ItemCtx { rank: 1, reported_total: None, config: &cfg };
     let g = sources::oss::normalize_entry(enabled[0], &ctx).unwrap();
     assert_eq!((g.source_id.as_str(), g.title.as_str()), ("2048", "2048"));

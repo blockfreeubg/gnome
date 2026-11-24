@@ -11,7 +11,9 @@ const AD_HEAVY = ['https://www.speedtest.net/', 'https://www.cnn.com/', 'https:/
 const TRACKER_HEAVY = ['https://www.nytimes.com/', 'https://www.imdb.com/', 'https://www.businessinsider.com/', 'https://www.huffpost.com/', 'https://www.reddit.com/'];
 const CONTROLS = ['https://en.wikipedia.org/', 'https://github.com/', 'https://news.ycombinator.com/', 'https://developer.mozilla.org/'];
 const OFF_TOO = new Set(['https://www.cnn.com/', 'https://www.nytimes.com/', 'https://en.wikipedia.org/']);
-const WALL = /just a moment|access denied|are you a robot|captcha|attention required|unusual traffic|blocked/i;
+const WALL = /just a moment|access denied|are you a robot|captcha|attention required|unusual traffic|blocked|403 forbidden|unknown error/i;
+// A DataDome interstitial (measured 2026-11-21 on nytimes.com and forbes.com through GNOME): the page's title is the
+// bare host name and its body has no text (the challenge is a cross-origin frame).
 
 export async function run(ctx) {
   const bk = ctx.stack.blocker;
@@ -42,8 +44,13 @@ export async function run(ctx) {
       const d1 = await app.cmd('diagnostics', {}).catch(() => null);
       const shot = path.join(dir, `${ctx.browser}-${engine}-${new URL(url).hostname}-${tab}.png`);
       await app.page.screenshot({ path: shot }).catch(() => null);
+      const text = await Promise.race([
+        app.tabFrame(tab).evaluate(() => (document.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 300)).catch(() => ''),
+        ctx.sleep(5000).then(() => ''),
+      ]);
       await app.cmd('tab.close', { tabId: tab }).catch(() => null);
-      const wall = WALL.test(nav.title ?? '');
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      const wall = WALL.test(nav.title ?? '') || WALL.test(text) || ((nav.title ?? '') === host && text === '');
       return { ok: nav.ok, title: nav.title ?? null, error: nav.error ?? null, blocked, wall, lag: d1?.mainThread ?? null, lagBefore: d0?.mainThread ?? null };
     };
     for (const engine of ENGINES) {

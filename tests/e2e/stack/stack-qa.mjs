@@ -223,10 +223,11 @@ for (const [origin, method, path, want, label] of expectations) {
 section('Security headers per role');
 {
   const csp = index.headers.get('content-security-policy') ?? '';
-  check(index.headers.get('x-frame-options') === 'SAMEORIGIN', 'app: X-Frame-Options SAMEORIGIN');
+  // The shell is never framed (WAVE-C §4.5): frame-ancestors 'none' and X-Frame-Options: DENY.
+  check(index.headers.get('x-frame-options') === 'DENY', 'app: X-Frame-Options DENY');
   check(new RegExp(`frame-src [^;]*${PROXY.replace(/[.:/]/g, '\\$&')}`).test(csp), 'app: frame-src lists the proxy origin');
   check(/connect-src 'self';/.test(csp) && !/ wss?:/.test(csp), "app: connect-src 'self' without ws:/wss:");
-  check(/frame-ancestors 'self'/.test(csp), "app: frame-ancestors 'self'");
+  check(/frame-ancestors 'none'/.test(csp), "app: frame-ancestors 'none'");
   for (const path of ['/engine/', '/api/health', '/nope', ...(asset ? [asset] : [])]) {
     const r = await http(`${PROXY}${path}`);
     const pcsp = r.headers.get('content-security-policy') ?? '';
@@ -286,7 +287,8 @@ section('Health, VPN locations');
     JSON.stringify(min),
   );
   const vpn = JSON.parse((await http(`${APP}/api/vpn/locations`)).body);
-  check(Array.isArray(vpn.profiles) && /^https:\/\//.test(vpn.verify_url ?? ''), `/api/vpn/locations: ${vpn.profiles?.length} profiles + verify_url`);
+  // verify_url is the operator's GNOME_VPN_CHECK_URL: null by default (WAVE-C D15), an http(s) URL when set.
+  check(Array.isArray(vpn.profiles) && (vpn.verify_url === null || /^https?:\/\//.test(vpn.verify_url ?? '')), `/api/vpn/locations: ${vpn.profiles?.length} profiles + verify_url (${vpn.verify_url})`);
   check(
     (vpn.profiles ?? []).every((p) => ['id', 'label', 'country_code', 'country', 'city', 'path'].every((k) => typeof p[k] === 'string') && ['up', 'down', 'unknown'].includes(p.status)),
     'every location has id, label, country, city, path and a status',
@@ -295,16 +297,22 @@ section('Health, VPN locations');
 }
 
 section('Wisp tickets and the gateway');
-check(ticketRes.status === 200 && /^w1\.\d+\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/.test(ticket.ticket ?? ''), 'ticket minted on the app origin');
+// Route-bound tickets (WAVE-C D23): w2.<exp>.<iat>.<route>.<session_ref>.<mac>; a mint without a body is `d` (/wisp/).
+check(ticketRes.status === 200 && /^w2\.\d+\.\d+\.d\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/.test(ticket.ticket ?? ''), 'ticket minted on the app origin (w2, default route)');
 check(ticket.wisp_url === `${PROXY.replace(/^http/, 'ws')}/wisp/`, 'wisp_url is the proxy origin\'s /wisp/', ticket.wisp_url);
 {
   const ttl = (ticket.expires_at - Date.now()) / 1000;
   check(ttl > config.wisp.ticket_ttl_s - 60 && ttl <= config.wisp.ticket_ttl_s, `ticket expires in ≈ ticket_ttl_s (${Math.round(ttl)} s)`);
 }
 const wsRoute = `${PROXY.replace(/^http/, 'ws')}${ROUTE}`;
+// A profile route needs a ticket minted for it (WAVE-C D23): {"route": {"profile": "<id>"}}.
+const routeProfile = /^\/wisp\/p\/([^/]+)\/$/.exec(ROUTE)?.[1] ?? null;
+const routeTicket = routeProfile
+  ? (await (await fetch(`${APP}/api/wisp/ticket`, { method: 'POST', headers: { 'X-GNOME-Request': '1', 'content-type': 'application/json', cookie: setCookies.map((c) => c.split(';')[0]).join('; ') }, body: JSON.stringify({ route: { profile: routeProfile } }) })).json()).ticket
+  : ticket.ticket;
 if (!OFFLINE) {
   for (const [form, suffix] of [['?t=<ticket>&/', '&/'], ['?t=<ticket>/', '/'], ['?t=<ticket>', '']]) {
-    const u = await upgrade(`${wsRoute}?t=${ticket.ticket}${suffix}`, PROXY);
+    const u = await upgrade(`${wsRoute}?t=${routeTicket}${suffix}`, PROXY);
     if (!u.ws) {
       check(false, `${ROUTE}${form} upgrades`, `${u.status} ${u.body}`);
       continue;
@@ -317,7 +325,7 @@ if (!OFFLINE) {
     }
     u.ws.close();
   }
-  const u = await upgrade(`${wsRoute}?t=${ticket.ticket}&/`, PROXY);
+  const u = await upgrade(`${wsRoute}?t=${routeTicket}&/`, PROXY);
   try {
     const r = u.ws ? await httpThroughWisp(u.ws, 'example.org') : { status: u.status };
     check(r.status === 200, 'http://example.org/ through Wisp', `HTTP ${r.status}`);
@@ -326,32 +334,32 @@ if (!OFFLINE) {
   }
   u.ws?.close();
 }
-const forged = ticket.ticket.slice(0, -4) + (ticket.ticket.endsWith('AAAA') ? 'BBBB' : 'AAAA');
+const forged = routeTicket.slice(0, -4) + (routeTicket.endsWith('AAAA') ? 'BBBB' : 'AAAA');
 for (const [name, query, origin, status, code] of [
   ['no ticket', '', PROXY, 401, 'wisp_ticket_missing'],
   ['empty ticket', '?t=&/', PROXY, 401, 'wisp_ticket_missing'],
   ['forged ticket', `?t=${forged}&/`, PROXY, 401, 'wisp_ticket_invalid'],
   ['malformed ticket', '?t=hello&/', PROXY, 401, 'wisp_ticket_invalid'],
-  ['two t parameters', `?t=${ticket.ticket}&t=${ticket.ticket}&/`, PROXY, 401, 'wisp_ticket_invalid'],
-  ['?t=<ticket>// (two slashes)', `?t=${ticket.ticket}//`, PROXY, 401, 'wisp_ticket_invalid'],
-  ['Origin = app origin', `?t=${ticket.ticket}&/`, APP, 403, 'forbidden'],
-  ['Origin = another site', `?t=${ticket.ticket}&/`, 'https://evil.example', 403, 'forbidden'],
-  ['no Origin', `?t=${ticket.ticket}&/`, undefined, 403, 'forbidden'],
+  ['two t parameters', `?t=${routeTicket}&t=${routeTicket}&/`, PROXY, 401, 'wisp_ticket_invalid'],
+  ['?t=<ticket>// (two slashes)', `?t=${routeTicket}//`, PROXY, 401, 'wisp_ticket_invalid'],
+  ['Origin = app origin', `?t=${routeTicket}&/`, APP, 403, 'forbidden'],
+  ['Origin = another site', `?t=${routeTicket}&/`, 'https://evil.example', 403, 'forbidden'],
+  ['no Origin', `?t=${routeTicket}&/`, undefined, 403, 'forbidden'],
 ]) {
   const u = await upgrade(`${PROXY.replace(/^http/, 'ws')}/wisp/${query}`, origin);
   u.ws?.close();
   check(u.status === status && u.code === code, `upgrade refused before the upgrade: ${name} → ${status} ${code}`, u.ws ? 'upgraded!' : `${u.status} ${u.code}`);
 }
 for (const [name, query, status, code, method] of [
-  ['valid ?t=<ticket>&/', `?t=${ticket.ticket}&/`, 426, 'upgrade_required'],
-  ['valid ?t=<ticket>/', `?t=${ticket.ticket}/`, 426, 'upgrade_required'],
-  ['valid ?t=<ticket>', `?t=${ticket.ticket}`, 426, 'upgrade_required'],
-  ['valid, HEAD', `?t=${ticket.ticket}&/`, 426, null, 'HEAD'],
+  ['valid ?t=<ticket>&/', `?t=${routeTicket}&/`, 426, 'upgrade_required'],
+  ['valid ?t=<ticket>/', `?t=${routeTicket}/`, 426, 'upgrade_required'],
+  ['valid ?t=<ticket>', `?t=${routeTicket}`, 426, 'upgrade_required'],
+  ['valid, HEAD', `?t=${routeTicket}&/`, 426, null, 'HEAD'],
   ['forged', `?t=${forged}&/`, 401, 'wisp_ticket_invalid'],
   ['missing', '', 401, 'wisp_ticket_missing'],
   ...(process.env.GNOME_QA_EXPIRED_TICKET ? [['expired', `?t=${process.env.GNOME_QA_EXPIRED_TICKET}&/`, 401, 'wisp_ticket_expired']] : []),
 ]) {
-  const r = await http(`${PROXY}/wisp/${query}`, { method: method ?? 'GET' }); // no Origin header
+  const r = await http(`${PROXY}${ROUTE}${query}`, { method: method ?? 'GET' }); // no Origin header; the route the ticket was minted for (D23)
   const ok = r.status === status && (code === null || r.code === code) && (status !== 426 || r.headers.get('upgrade') === 'websocket');
   check(ok && r.headers.get('cache-control') === 'no-store', `probe ${name} → ${status}${code ? ` ${code}` : ''}`, `${r.status} ${r.code}`);
 }

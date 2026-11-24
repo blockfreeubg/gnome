@@ -233,6 +233,9 @@ export async function startGnomeServer({ dir, staticDir, env = {}, label = 'serv
     GNOME_WISP_UPSTREAM: `127.0.0.1:${PORTS.holywisp}`,
     GNOME_ARGON2_MEMORY_KIB: '8192',
     GNOME_FILTERS_REFRESH_HOURS: '0',
+    // No live game-feed import and no OSS download from GitHub (WAVE-C §2.2).
+    GNOME_CATALOG_REFRESH_HOURS: '0',
+    GNOME_OSS_FETCH: 'manual',
     GNOME_LOG: 'info',
   };
   const merged = { ...base, ...env };

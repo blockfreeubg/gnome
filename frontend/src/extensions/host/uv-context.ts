@@ -39,11 +39,23 @@ export class UvContextSender {
     this.#schedule();
   }
 
-  /** A UV tab-top navigation to `proxiedUrl` is about to start: sent at once (it must beat the fetch). */
-  nav(proxiedUrl: string): void {
+  /**
+   * A UV tab-top navigation to `proxiedUrl` is about to start: sent at once (it must beat the fetch). `initiator`
+   * (GNOME's own loads only, the `inits` of the contract): '' for a load GNOME started itself, the opener's real URL
+   * for a tab a page asked for; absent for a navigation the page started (the SW takes its initiator from the referrer).
+   */
+  nav(proxiedUrl: string, initiator?: string): void {
     if (!this.#fits(proxiedUrl)) return;
     this.#flush();
-    this.#post({ type: 'gnome-blocker-context', docs: [], navs: [proxiedUrl], drop: [], reset: false });
+    const inits: Array<[string, string]> = initiator !== undefined && (initiator === '' || this.#fits(initiator)) ? [[proxiedUrl, initiator]] : [];
+    this.#post({ type: 'gnome-blocker-context', docs: [], navs: [proxiedUrl], drop: [], ...(inits.length ? { inits } : {}), reset: false });
+  }
+
+  /** The engine host is about to fetch `proxiedUrl` for the page `pageUrl` (its favicon, a download): sent at once. */
+  init(proxiedUrl: string, pageUrl: string): void {
+    if (!this.#fits(proxiedUrl) || !this.#fits(pageUrl)) return;
+    this.#flush();
+    this.#post({ type: 'gnome-blocker-context', docs: [], navs: [], drop: [], inits: [[proxiedUrl, pageUrl]], reset: false });
   }
 
   /** An announced navigation was cancelled. */

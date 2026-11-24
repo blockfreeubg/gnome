@@ -50,10 +50,16 @@ pub enum RateClass {
     WispUpgrade,
     /// Every admin-listener request, checked before the token (bounds token guessing on a remote admin listener).
     Admin,
+    /// `GET /api/thumb/:id`, counted instead of `Api` (a long scroll loads hundreds): 600 burst / 1200 per min.
+    Thumb,
+    /// Thumbnail cache misses that need an upstream fetch: 60 burst / 120 per min.
+    ThumbFetch,
+    /// `POST /api/vpn/locations/:id/check`: 6 burst / 6 per min (the VPN module adds a 60 s gap per location).
+    VpnCheck,
 }
 
 impl RateClass {
-    pub const ALL: [RateClass; 7] = [
+    pub const ALL: [RateClass; 10] = [
         RateClass::Api,
         RateClass::SessionCreate,
         RateClass::Auth,
@@ -61,6 +67,9 @@ impl RateClass {
         RateClass::WispTicket,
         RateClass::WispUpgrade,
         RateClass::Admin,
+        RateClass::Thumb,
+        RateClass::ThumbFetch,
+        RateClass::VpnCheck,
     ];
 
     pub fn name(self) -> &'static str {
@@ -72,6 +81,9 @@ impl RateClass {
             Self::WispTicket => "wisp_ticket",
             Self::WispUpgrade => "wisp_upgrade",
             Self::Admin => "admin",
+            Self::Thumb => "thumb",
+            Self::ThumbFetch => "thumb_fetch",
+            Self::VpnCheck => "vpn_check",
         }
     }
 
@@ -92,6 +104,9 @@ impl RateClass {
             Self::WispTicket => (None, r(30, 30)),
             Self::WispUpgrade => (r(60, 60), None),
             Self::Admin => (r(60, 120), None),
+            Self::Thumb => (r(600, 1200), None),
+            Self::ThumbFetch => (r(60, 120), None),
+            Self::VpnCheck => (r(6, 6), None),
         }
     }
 }

@@ -135,8 +135,22 @@ impl Source {
         }
     }
 
-    /// Fixed embed (iframe) hosts of the source, for the app CSP `frame-src`. Playgama also embeds a few games
-    /// from the developers' own hosts; use [`crate::Catalog::embed_hosts`] for the complete, data-derived list.
+    /// Hosts the importer requests feed pages from (the server's feed client allow-list, WAVE-C §4.8 item 2).
+    pub const fn feed_hosts(self) -> &'static [&'static str] {
+        match self {
+            Source::GamePix => &["feeds.gamepix.com"],
+            Source::GameDistribution => &["catalog.api.gamedistribution.com"],
+            Source::Playgama => &["widgets.playgama.com"],
+            Source::GameMonetize => &["gamemonetize.com"],
+            Source::Famobi => &["api.famobi.com"],
+            Source::ItchIo => &["itch.io"],
+            Source::Js13k => &["js13kgames.com"],
+            Source::Oss => &[],
+        }
+    }
+
+    /// Fixed embed (iframe) hosts of the source (the server's frame policy, WAVE-C D4). Playgama also embeds a few
+    /// games from the developers' own hosts, which the operator approves one by one (`GNOME_GAMES_EMBED_HOSTS`).
     pub const fn embed_hosts(self) -> &'static [&'static str] {
         match self {
             Source::GamePix => &["play.gamepix.com"],
@@ -168,5 +182,19 @@ mod tests {
         assert_eq!(Source::from_id(" Itch.io "), Some(Source::ItchIo));
         assert_eq!(Source::from_id("crazygames"), None);
         assert!(!Source::ItchIo.playable() && !Source::Js13k.playable() && Source::Oss.playable());
+    }
+
+    #[test]
+    fn every_adapter_requests_its_feed_hosts() {
+        let config = crate::CatalogConfig::default();
+        for s in Source::ALL {
+            let Some(adapter) = crate::sources::adapter(s, &config) else {
+                assert!(s.feed_hosts().is_empty());
+                continue;
+            };
+            let first = adapter.first(1_762_776_000_000);
+            let url = crate::url::Url::parse(&adapter.request(&first).url).unwrap();
+            assert!(s.feed_hosts().contains(&url.host.as_str()), "{s}: {}", url.host);
+        }
     }
 }

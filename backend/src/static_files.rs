@@ -59,7 +59,9 @@ pub fn is_engine_path(path: &str) -> bool {
 }
 
 /// Prefixes that never fall back to the SPA (`/x` and `/x/...` → 404 JSON unless a route matches).
-pub const RESERVED_PREFIXES: &[&str] = &["/api", "/admin", "/wisp"];
+/// `/oss` (open-source game builds, proxy role) and `/play-frame` (the game wrapper, app role) belong to the games
+/// module: without it (or for an unknown game) they answer 404, never the SPA shell (WAVE-C §3.1).
+pub const RESERVED_PREFIXES: &[&str] = &["/api", "/admin", "/wisp", "/oss", "/play-frame"];
 
 /// Where the engine host lives (`/engine/` → `engine/index.html` of the build; served on the proxy role only).
 pub const ENGINE_HOST_PREFIX: &str = "/engine/";
@@ -69,9 +71,10 @@ pub fn is_engine_host_path(path: &str) -> bool {
     path.starts_with(ENGINE_HOST_PREFIX)
 }
 
-/// Static paths that belong to the proxy origin only: the engine host, the service worker and the vendor builds.
+/// Static paths that belong to the proxy origin only: the engine host, the service worker, the vendor builds and the
+/// open-source game builds (`/oss/<slug>/…`, served by the games module on the proxy role; never the SPA fallback).
 fn proxy_only(path: &str) -> bool {
-    is_engine_host_path(path) || path == "/sw.js" || path.starts_with("/vendor/")
+    is_engine_host_path(path) || path == "/sw.js" || path.starts_with("/vendor/") || path.starts_with("/oss/")
 }
 
 /// Files up to this size are kept in memory…
@@ -795,6 +798,8 @@ fn respond_templated(entry: &Entry, template: &str, req: ServeRequest<'_>) -> Re
 fn apply_csp(h: &mut HeaderMap, csp: &ResponseCsp, role: Role) {
     match csp {
         ResponseCsp::Shell(csp) if role.serves_app() => {
+            // Nothing frames the SPA shell (WAVE-C D4); the middleware's SAMEORIGIN stays for other app answers.
+            h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
             h.insert(header::CONTENT_SECURITY_POLICY, csp.enforce.clone());
             if let Some(ro) = &csp.report_only {
                 h.insert(header::CONTENT_SECURITY_POLICY_REPORT_ONLY, ro.clone());

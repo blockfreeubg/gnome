@@ -320,7 +320,7 @@ async fn link_out_sources_import_as_unplayable() {
 #[tokio::test]
 async fn oss_import_requires_builds_and_hides_removed_entries_at_once() {
     let dir = tempfile::tempdir().unwrap();
-    for slug_entry in ["2048/index.html", "hexgl/index.html", "javascript-racer/v4.final.html"] {
+    for slug_entry in ["2048/index.html", "bullethell/index.html", "javascript-racer/v4.final.html"] {
         let p = dir.path().join(slug_entry);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "<!doctype html>").unwrap();
@@ -336,7 +336,7 @@ async fn oss_import_requires_builds_and_hides_removed_entries_at_once() {
     assert_eq!((r.complete, r.inserted, r.requests), (true, 3, 0), "{r:?}");
     assert!(none.requests().is_empty(), "the manifest is local");
     assert_eq!(count(&db, "SELECT count(*) FROM games WHERE embed_kind = 'selfhost' AND listed = 1"), 3);
-    std::fs::remove_file(dir.path().join("hexgl/index.html")).unwrap();
+    std::fs::remove_file(dir.path().join("bullethell/index.html")).unwrap();
     let r = cat.import(&none, &clock, &db, Source::Oss, ImportOptions::default()).await.unwrap();
     assert_eq!((r.complete, r.hidden), (true, 1));
     assert_eq!(count(&db, "SELECT count(*) FROM games WHERE listed = 1"), 2);

@@ -39,8 +39,9 @@ pub struct OssEntry {
     pub slug: String,
     /// Title (README heading).
     pub title: String,
-    /// `https://github.com/<owner>/<repo>`.
-    pub repo: String,
+    /// `https://github.com/<owner>/<repo>` (absent for a `local` build).
+    #[serde(default)]
+    pub repo: Option<String>,
     /// Pinned commit (40 hex) the build is made from.
     #[serde(default)]
     pub commit: Option<String>,
@@ -80,6 +81,22 @@ pub struct OssEntry {
     #[serde(default)]
     /// Verification notes.
     pub notes: Option<String>,
+    /// The review of the pinned commit (`"<date>: <what was checked>"`, WAVE-C D5): required for every enabled
+    /// entry that is not `local`; an entry without one is never fetched or served.
+    #[serde(default)]
+    pub reviewed: Option<String>,
+    /// The review found no storage use: the game runs in an opaque-origin sandbox (no access to the proxy realm).
+    #[serde(default)]
+    pub isolated: bool,
+    /// The game needs pointer lock.
+    #[serde(default)]
+    pub pointer_lock: bool,
+    /// The game supports a gamepad.
+    #[serde(default)]
+    pub gamepad: bool,
+    /// An operator-provided build in `<GNOME_OSS_GAMES_DIR>/<slug>/` (no `repo`, no `commit`; never fetched).
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// A safe relative path inside a build (no traversal, no absolute paths, no odd characters).
@@ -101,9 +118,24 @@ impl OssEntry {
         if !crate::slug::is_valid_slug(&self.slug) {
             return Err(format!("invalid slug {:?}", self.slug));
         }
-        let repo = Url::parse(&self.repo).filter(|u| u.scheme == "https" && u.host == "github.com");
-        if repo.as_ref().is_none_or(|u| u.path.trim_matches('/').split('/').count() != 2) {
-            return Err(format!("{}: repo must be https://github.com/<owner>/<repo>", self.slug));
+        if self.local {
+            if self.repo.is_some() || self.commit.is_some() {
+                return Err(format!("{}: a local build has no repo and no commit", self.slug));
+            }
+            if self.license_file.is_none() || self.copyright.is_none() {
+                return Err(format!("{}: a local build needs license_file and copyright", self.slug));
+            }
+        } else {
+            let repo =
+                self.repo.as_deref().and_then(Url::parse).filter(|u| u.scheme == "https" && u.host == "github.com");
+            if repo.as_ref().is_none_or(|u| u.path.trim_matches('/').split('/').count() != 2) {
+                return Err(format!("{}: repo must be https://github.com/<owner>/<repo>", self.slug));
+            }
+        }
+        if let Some(f) = &self.license_file
+            && !is_safe_relative_path(f)
+        {
+            return Err(format!("{}: unsafe license_file path {f:?}", self.slug));
         }
         if let Some(c) = &self.commit
             && (c.len() != 40 || !c.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -136,7 +168,14 @@ impl OssEntry {
 
     /// Whether the entry may be imported: enabled, static, and (when required) its build is present.
     pub fn importable(&self, cfg: &OssConfig) -> bool {
-        self.enabled && self.build == "static" && (!cfg.require_builds || build_present(&cfg.builds_dir, self))
+        self.servable() && (!cfg.require_builds || build_present(&cfg.builds_dir, self))
+    }
+
+    /// Enabled, a static build, and reviewed (or the operator's own `local` build): may be fetched and served.
+    pub fn servable(&self) -> bool {
+        self.enabled
+            && self.build == "static"
+            && (self.local || self.reviewed.as_deref().is_some_and(|r| !r.trim().is_empty()))
     }
 }
 
@@ -171,7 +210,7 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, CatalogError> {
 pub fn normalize_entry(e: &OssEntry, ctx: &ItemCtx<'_>) -> Result<NewGame, Reject> {
     e.validate()?;
     let raw = serde_json::to_string(e).map_err(|err| err.to_string())?;
-    let owner = e.repo.trim_end_matches('/').rsplit('/').nth(1).unwrap_or("");
+    let owner = e.repo.as_deref().map_or("", |r| r.trim_end_matches('/').rsplit('/').nth(1).unwrap_or(""));
     let (mut tags, flags) = normalize_tags(e.tags.iter().map(String::as_str));
     tags.truncate(super::MAX_TAGS);
     let thumbnail = e.thumbnail.as_ref().map(|t| format!("{PATH_PREFIX}{}/{t}", e.slug));
@@ -200,7 +239,7 @@ pub fn normalize_entry(e: &OssEntry, ctx: &ItemCtx<'_>) -> Result<NewGame, Rejec
         height: None,
         orientation: None,
         mobile: None,
-        source_url: Some(e.repo.clone()),
+        source_url: e.repo.clone(),
         license: Some(e.license.clone()),
         attribution,
         categories: e.categories.iter().filter_map(|c| Category::from_slug(c)).collect(),
@@ -232,7 +271,7 @@ mod tests {
         let m = parse_manifest(EMBEDDED_MANIFEST).unwrap();
         assert!(m.games.len() >= 20, "all §8.2 repositories are listed");
         let enabled: Vec<&str> = m.games.iter().filter(|g| g.enabled).map(|g| g.slug.as_str()).collect();
-        assert!(enabled.contains(&"2048") && enabled.contains(&"hexgl"));
+        assert!(enabled.contains(&"2048") && enabled.contains(&"bullethell") && !enabled.contains(&"hexgl"));
         for g in m.games.iter().filter(|g| g.enabled) {
             assert_eq!(g.build, "static", "{}", g.slug);
             assert!(g.commit.is_some(), "{} is pinned", g.slug);
@@ -265,7 +304,7 @@ mod tests {
         e.entry = "../../secret.html".into();
         assert!(e.validate().is_err());
         let mut e = base.clone();
-        e.repo = "https://gitlab.com/x/y".into();
+        e.repo = Some("https://gitlab.com/x/y".into());
         assert!(e.validate().is_err());
         let mut e = base;
         e.categories = vec!["girls".into()];

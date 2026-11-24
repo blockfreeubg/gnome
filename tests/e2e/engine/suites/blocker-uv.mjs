@@ -1,6 +1,6 @@
 // Lane x1 (docs/WAVE-B3.md §12.2 "Ultraviolet specifics", rows V1–V10), Ultraviolet only: the service worker's half of
 // the blocker (§4.5, D15). Parts: restart (V1), nested (V2), union (V3), toptype (V4), contexts (V5–V9), limit (V10), params (V11).
-import { applyBlocker, blockedOf, blockerSettings, clickIn, listRefs, openBlockerApp, pageOut, partOn, waitBlocker } from './blocker-network.mjs';
+import { applyBlocker, blockedOf, blockerSettings, clickIn, listRefs, openBlockerApp, pageOut, partOn, TRANSPORT, waitBlocker } from './blocker-network.mjs';
 
 export async function run(ctx) {
   const bk = ctx.stack.blocker;
@@ -10,7 +10,7 @@ export async function run(ctx) {
   }
   const refs = await listRefs(ctx);
   const base = blockerSettings(refs);
-  const rec = (test, r) => ctx.record({ test, engine: 'ultraviolet', transport: 'libcurl', ...r });
+  const rec = (test, r) => ctx.record({ test, engine: 'ultraviolet', transport: TRANSPORT, ...r });
   const browser = await ctx.launch();
   try {
     const context = await ctx.newContext(browser);

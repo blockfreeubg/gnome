@@ -1,5 +1,17 @@
 # Wave C module plan (games + VPN page)
 
+> **Status 2026-11-24: done (`c-finish`).** From the live tree after the review fixes: cargo fmt/clippy clean, 500
+> tests pass (5 ignored); npm check/test (1497) green; full e2e runner Chromium 798 pass / 13 fail, Firefox 788 / 19,
+> every failure an expected limit or the `--no-build` build-id row; the Wave C suites have no failures in either
+> browser (P5 included); QA scripts green except multi-origin `postMessage` console noise on `/browse`.
+>
+> **Status 2026-11-23: integrated (`c-gate`).** Final matrix from a snapshot: cargo fmt/clippy clean, 500 tests pass
+> (5 ignored; the online ones pass by hand except `vpn_exit`, not run); npm check/test (1497)/build green; the full e2e
+> runner Chromium 781 pass / 17 fail, Firefox 773 / 22, every failure an expected limit or green on re-run except
+> `games-player` P5 in Chromium; QA scripts green except Chromium-only console and layout-shift findings and the
+> filter-list rows of `settings-features-qa`. Rows not written yet and open findings: `docs/PROGRESS.md` "RESUME
+> HERE" and "Deferred items". The text below is the plan as written.
+
 > Status: plan for Wave C, written 2026-11-18 (`wave-c:plan`, doc-only) while the UI restyle's final gate was running
 > and before Wave B step 2's integration part 2 and Wave B step 3. It builds on the code as it stood that evening:
 > the reviewed `gnome-catalog` crate (`crates/catalog/**`, migrations 100–101), the server's module system
@@ -426,7 +438,7 @@ pub fn oss_document_csp(app_origins: &[&str], isolated: bool, pointer_lock: bool
 /// `Permissions-Policy` of app-origin HTML (D3). Every name must be one Chromium recognizes (an e2e row checks the
 /// console); fullscreen, autoplay, gamepad, clipboard-write and the motion sensors are left to iframe `allow`.
 pub const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), \
-    hid=(), bluetooth=(), midi=(), display-capture=(), screen-wake-lock=(), idle-detection=(), \
+    hid=(), midi=(), display-capture=(), screen-wake-lock=(), idle-detection=(), \
     publickey-credentials-get=(), publickey-credentials-create=(), otp-credentials=(), identity-credentials-get=(), \
     xr-spatial-tracking=(), local-fonts=(), window-management=()";
 

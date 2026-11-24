@@ -531,8 +531,13 @@ function toTicket(res: TicketResponse | undefined, date: string | null): WispTic
   return { ticket: res.ticket, expiresAt: res.expires_at, wispUrl: res.wisp_url, date };
 }
 
+/** The route a Wisp ticket is bound to (WAVE-C D23): the gateway accepts it only on that route's path. */
+export type TicketRoute = 'default' | { profile: string };
+
 export interface TicketRequestOptions {
   signal?: AbortSignal;
+  /** The route the app chose (`chooseRoute`); default `'default'` (`/wisp/`). */
+  route?: TicketRoute;
   /**
    * True (the default) when the user started this mint (a navigation from GNOME's own UI, the "Sign in" button of a
    * notice): a `code`-mode server may then ask for the access code, and `accounts` mode emits
@@ -552,7 +557,8 @@ export async function requestWispTicket(opts: TicketRequestOptions = {}): Promis
   const interactive = opts.interactive ?? true;
   const post = async (): Promise<WispTicket> => {
     let date: string | null = null;
-    const res = await api.post<TicketResponse>('/api/wisp/ticket', {}, {
+    const route: TicketRoute = opts.route ?? 'default';
+    const res = await api.post<TicketResponse>('/api/wisp/ticket', { route }, {
       ...(opts.signal ? { signal: opts.signal } : {}),
       timeoutMs: 10_000,
       onHeaders: (h) => {

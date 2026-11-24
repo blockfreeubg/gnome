@@ -122,5 +122,10 @@ describe('WsMarks (D16 backstop)', () => {
     m.allowed('wss://b.example/');
     t = 10_002;
     expect(m.take('wss://b.example/')).toBe('judge');
+    m.allowed('wss://c.example/');
+    m.blocked('wss://ads.example/s');
+    m.clear();
+    expect(m.take('wss://c.example/')).toBe('judge');
+    expect(m.take('wss://ads.example/s')).toBe('judge');
   });
 });

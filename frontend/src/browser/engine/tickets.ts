@@ -11,18 +11,21 @@
  *   reported as `credentials` so the browser view can show its passive notice. Only a gesture in GNOME's own UI
  *   makes an interactive mint.
  * - `Ticket.expiresAt` is on this browser's clock: ticketExpiresAtLocal() with the response's `Date` header.
+ * - Tickets are route-bound (WAVE-C D23): each request names the route the app chose; a batch never mixes routes.
+ *   A queued mint for another route is superseded by the newer request (its waiters get the newer route's ticket),
+ *   and the waiters of a mint in flight for a route that a newer request replaced wait for that newer mint.
  */
 import { TICKET, ticketExpiresAtLocal, type Ticket } from '../../shared/engine-protocol';
-import { isApiError, type WispTicket } from '../../lib/api';
+import { isApiError, type TicketRoute, type WispTicket } from '../../lib/api';
 import { systemClock, type Clock } from './client';
 
 export type MintOutcome =
-  | { ok: true; ticket: Ticket }
+  | { ok: true; ticket: Ticket; route: TicketRoute }
   | { ok: false; reason: 'credentials'; kind: 'login' | 'access-code'; message: string }
   | { ok: false; reason: 'error'; message: string };
 
 export interface TicketMinterDeps {
-  mint(opts: { interactive: boolean }): Promise<WispTicket>;
+  mint(opts: { interactive: boolean; route: TicketRoute }): Promise<WispTicket>;
   /** `/api/config` → wisp.ticket_ttl_s · 1000 (caps the life the app computes). */
   ttlMs(): number;
   clock?: Clock;
@@ -34,7 +37,13 @@ interface Waiter {
 
 interface Batch {
   interactive: boolean;
+  route: TicketRoute;
   waiters: Waiter[];
+}
+
+/** Two routes are the same route. */
+export function sameRoute(a: TicketRoute, b: TicketRoute): boolean {
+  return a === b || (typeof a === 'object' && typeof b === 'object' && a.profile === b.profile);
 }
 
 export class TicketMinter {
@@ -58,18 +67,20 @@ export class TicketMinter {
    * Asks for a ticket. Coalesces with a mint in flight (unless this one is interactive and that one is not: it might
    * need the prompt the other may not show) or with a queued one.
    */
-  request(interactive: boolean): Promise<MintOutcome> {
+  request(interactive: boolean, route: TicketRoute = 'default'): Promise<MintOutcome> {
     return new Promise((resolve) => {
       const waiter: Waiter = { resolve };
-      if (this.#inflight && (!interactive || this.#inflight.interactive)) {
+      if (this.#inflight && sameRoute(this.#inflight.route, route) && (!interactive || this.#inflight.interactive)) {
         this.#inflight.waiters.push(waiter);
         return;
       }
       if (this.#queued) {
+        // The newest request's route wins: a pending mint for another route is superseded.
+        this.#queued.route = route;
         this.#queued.interactive ||= interactive;
         this.#queued.waiters.push(waiter);
       } else {
-        this.#queued = { interactive, waiters: [waiter] };
+        this.#queued = { interactive, route, waiters: [waiter] };
       }
       this.#schedule();
     });
@@ -108,12 +119,13 @@ export class TicketMinter {
     this.#times.push(startedAt);
     this.sent++;
     void this.#deps
-      .mint({ interactive: batch.interactive })
+      .mint({ interactive: batch.interactive, route: batch.route })
       .then((t): MintOutcome => {
         const receivedAt = this.#clock.now();
         return {
           ok: true,
           ticket: { value: t.ticket, wispUrl: t.wispUrl, expiresAt: ticketExpiresAtLocal(t.expiresAt, t.date, receivedAt, this.#deps.ttlMs()) },
+          route: batch.route,
         };
       })
       .catch((err: unknown): MintOutcome | 'retry' => {
@@ -133,6 +145,10 @@ export class TicketMinter {
             this.#queued.interactive ||= batch.interactive;
             this.#queued.waiters.unshift(...batch.waiters);
           } else this.#queued = batch;
+        } else if (this.#queued && !sameRoute(this.#queued.route, batch.route)) {
+          // Superseded while in flight: its waiters get the newer route's ticket instead.
+          this.#queued.interactive ||= batch.interactive;
+          this.#queued.waiters.unshift(...batch.waiters);
         } else {
           for (const w of batch.waiters) w.resolve(outcome);
         }

@@ -1,6 +1,6 @@
 /**
  * The VPN exit check (capability `vpnVerify`, ENGINE-PROTOCOL §6.13): the check service URL the app took from
- * `/api/vpn/locations` → `verify_url` (am.i.mullvad.net/json by default), fetched through the current route with
+ * `/api/vpn/locations` → `verify_url` (the operator's `GNOME_VPN_CHECK_URL`; none by default), fetched through the current route with
  * TransportManager.proxyFetch, reduced to `{ip, country, city, vpnExit, checkedAt}`.
  *
  * The answer is what the check service says, never proof: after an escape a page can forge all of it (the app takes

@@ -48,6 +48,8 @@ serde_path_to_error = "0.1.20"
 # Sec-WebSocket-Accept check in the Wisp upstream health probe (RFC 6455 mandates SHA-1 there).
 sha1 = { version = "0.11.0", default-features = false }
 sha2 = { version = "0.11.1", default-features = false }
+# OSS game builds: GitHub's commit tarballs (gzip via flate2, already a dependency). No xattr support.
+tar = { version = "0.4.46", default-features = false }
 subtle = { version = "2.6.1", default-features = false, features = ["std"] }
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
@@ -58,7 +60,7 @@ tower-http = { version = "0.7.1", default-features = false, features = ["catch-p
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "json", "std"] }
 url = "2.5.8"
-# Test-only (gateway tests, Wisp client example): WebSocket peers and TLS through Wisp streams.
+# The server-side VPN exit check (Wisp over a WebSocket, TLS through it); gateway tests and the Wisp client example.
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }

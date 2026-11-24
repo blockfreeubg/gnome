@@ -94,7 +94,17 @@ export interface SwBlocker {
    * rewritten Location, or the SW's own 307 of parameter stripping): the next hop is the tab's own document too and is
    * judged under itself (D3 "every redirect hop"), not as a frame of the page that started the navigation.
    */
-  redirected(ctx: SwContext, location: string): void;
+  redirected(ctx: SwContext, location: string, initiator?: string | null): void;
+  /**
+   * The initiator of a UV navigation to `proxiedUrl` for SameSite and fetch metadata (lane x3's glue): the engine
+   * host's announced one (`inits`, one-shot: '' = GNOME's own load, else the opener's real URL), else the real URL of
+   * the recorded document `referrer` names (a lookup only), else null (unknown: cross-site).
+   */
+  initiatorOf(proxiedUrl: string, referrer: string | null): string | null;
+  /** The settings in force (the newest config with every host's scoped maps; the fallback before any). */
+  settings(): BlockerSettings;
+  /** The real http(s) URL of a proxied UV URL, or null. */
+  realOf(proxied: string): string | null;
 }
 
 export const SW_WAITS = { unknownClientMs: 50, tabTopLinkMs: 20, announcedConfigMs: 150, readyMs: 300, batchMs: 250, navTtlMs: 30_000 } as const;
@@ -234,6 +244,16 @@ export function startSwBlocker(deps: SwBlockerDeps): SwBlocker {
   composite.configure(SW_FALLBACK_SETTINGS);
   const reconfigure = (): void => composite.configure(effective());
 
+  /** Announced initiators (`inits`): proxied URL → [initiator, when]. One-shot, ≤ 30 s, LRU-bounded. */
+  const inits = new Map<string, [string, number]>();
+  const takeInit = (proxied: string): string | null => {
+    const key = strip(proxied);
+    const e = inits.get(key);
+    if (e === undefined) return null;
+    inits.delete(key);
+    return now() - e[1] <= SW_WAITS.navTtlMs ? e[0] : null;
+  };
+
   // ── ready(): one deadline per SW start ──
   let readyResolve: () => void = () => undefined;
   const readyPromise = new Promise<void>((r) => (readyResolve = r));
@@ -311,7 +331,9 @@ export function startSwBlocker(deps: SwBlockerDeps): SwBlocker {
         state.navs.delete(strip(d));
         state.navSeq.delete(strip(d));
         state.navOrigin.delete(strip(d));
+        inits.delete(strip(d));
       }
+      for (const [proxied, initiator] of msg.inits ?? []) lruSet(inits, strip(proxied), [initiator, t], LIMITS.navs);
       wake();
     },
     onClient(resultingClientId, proxiedUrl, creatorClientId, referrer) {
@@ -372,6 +394,15 @@ export function startSwBlocker(deps: SwBlockerDeps): SwBlocker {
         return { documentUrl: parent ?? top, topLevelUrl: top, isTopLevelDocument: false, documentProxied: refDoc !== null && documents.has(refDoc) ? refDoc : (creator?.doc ?? null) };
       }
       const id = event.clientId;
+      // A fetch the engine host makes for a page (its favicon, a download; lane x3's glue): that page's context.
+      if (id && hosts.has(id) && !clients.has(id)) {
+        const page = inits.has(strip(url)) ? takeInit(url) : null;
+        if (page) {
+          let doc: string | null = null;
+          for (const k of documents.keys()) if (realOf(k) === page) doc = k;
+          return { documentUrl: page, topLevelUrl: doc !== null ? (documents.get(doc) ?? null) : null, isTopLevelDocument: false, documentProxied: doc };
+        }
+      }
       if (id) {
         const has = (): boolean => {
           const c = clients.get(id);
@@ -394,15 +425,25 @@ export function startSwBlocker(deps: SwBlockerDeps): SwBlocker {
     attach: (info, doc) => {
       docOfInfo.set(info, doc);
     },
-    redirected(ctx, location) {
+    redirected(ctx, location, initiator) {
       if (!ctx.isTopLevelDocument || ctx.navHost === undefined) return;
       const state = hosts.get(ctx.navHost);
       if (!state || realOf(location) === null) return;
       const key = strip(location);
+      // The hop keeps the navigation's initiator (GNOME's own load stays initiator-less, as a browser's does).
+      if (initiator !== undefined && initiator !== null) lruSet(inits, key, [initiator, now()], LIMITS.navs);
       lruSet(state.navs, key, now(), LIMITS.navs);
       // the hop needs no config of its own: its host's answer for the first hop is in already
       lruSet(state.navSeq, key, 0, LIMITS.navs);
       lruSet(state.navOrigin, key, ctx.documentProxied ?? key, LIMITS.navs);
     },
+    initiatorOf(proxiedUrl, referrer) {
+      const announced = takeInit(proxiedUrl);
+      if (announced !== null) return announced;
+      const refDoc = referrer ? strip(referrer) : null;
+      return refDoc !== null && documents.has(refDoc) ? realOf(refDoc) : null;
+    },
+    settings: () => effective(),
+    realOf,
   };
 }

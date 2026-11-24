@@ -135,7 +135,7 @@ export async function run(ctx) {
     const app = await ctx.openApp(context, { route: `profile:${ctx.stack.profiles.live}`, fallback: '0' });
     const caps = app.init?.capabilities ?? [];
     if (!caps.includes('blocker')) {
-      ctx.record({ test: 'cs:setup', result: 'fail', notes: `the engine host does not offer 'blocker' (capabilities ${caps.join(',')}): build without GNOME_ENGINE_TEST_CAPABILITIES=blocker?` });
+      ctx.record({ test: 'cs:setup', result: 'fail', notes: `the engine host does not offer 'blocker' (capabilities ${caps.join(',')})` });
       return;
     }
     app.refs = await listRefs(app);

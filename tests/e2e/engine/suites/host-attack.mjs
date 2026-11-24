@@ -100,22 +100,26 @@ const FRAME_NAV_PATH = '/gnome-attack-engine-iframe-nav';
  * still preconnect to the host: ENGINE-PROTOCOL §1.1, a known limit; the sentinel sees that as a CONNECT). Each attempt
  * gets its own context and driver page: a refused navigation shows the browser's error page in the engine iframe, an
  * allowed one replaces the engine host.
+ * Since Wave C (D2) the shell's frame-src also has 'self' (the game wrapper /play-frame/<slug>), so a navigation to the
+ * app origin is allowed by frame-src and reaches the real server; what must hold there is that no app page renders in
+ * the frame (the shell's `frame-ancestors 'none'` + `X-Frame-Options: DENY`), so that target is not routed and passes
+ * when the engine iframe shows no GNOME shell.
  */
 export async function engineIframeNavigation(ctx, browser, fx) {
   const targets = [
     ['a former game-embed host', `https://itch.io${FRAME_NAV_PATH}`],
-    ['the app origin', `${ctx.stack.appOrigin}${FRAME_NAV_PATH}`],
+    ['the app origin (its shell must not render framed)', `${ctx.stack.appOrigin}${FRAME_NAV_PATH}`, 'app'],
   ];
-  await perEngine(ctx, "attack:escaped-engine-iframe-navigation (the app's frame-src allows only the engine host)", async (engine) => {
+  await perEngine(ctx, "attack:escaped-engine-iframe-navigation (the app's frame-src allows only the engine host, and app pages never render framed)", async (engine) => {
     const notes = [];
     let reached = 0;
     let tried = 0;
-    for (const [label, url] of targets) {
+    for (const [label, url, kind] of targets) {
       const context = await ctx.newContext(browser);
       try {
         const hits = [];
         await context.route(
-          (u) => u.pathname === FRAME_NAV_PATH,
+          (u) => u.pathname === FRAME_NAV_PATH && kind !== 'app',
           (route) => {
             hits.push(route.request().url());
             return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>reached</title><p>reached</p>' });
@@ -148,7 +152,14 @@ export async function engineIframeNavigation(ctx, browser, fx) {
         const host = new URL(url).host;
         const connects = ctx.stack.sentinel.since(t0).filter((e) => JSON.stringify(e).includes(host)).length;
         const engineFrame = app.page.frames().find((fr) => fr.parentFrame() === app.page.mainFrame());
-        notes.push(`${label}: ${sent}; requests that reached it ${hits.length}; sentinel lines naming ${host} ${connects}; engine iframe now ${String(engineFrame?.url() ?? '?').slice(0, 60)}`);
+        let shell = false;
+        if (kind === 'app') {
+          // Bounded: a frame whose document was refused may never answer an evaluation (Firefox).
+          const probe = engineFrame ? engineFrame.evaluate(() => !!document.querySelector('script[type=module][src*="/assets/"]') || /GNOME/.test(document.title)).catch(() => false) : Promise.resolve(false);
+          shell = await Promise.race([probe, ctx.sleep(5000).then(() => false)]);
+          if (shell) reached++;
+        }
+        notes.push(`${label}: ${sent}; requests that reached it ${hits.length}; sentinel lines naming ${host} ${connects}; engine iframe now ${String(engineFrame?.url() ?? '?').slice(0, 60)}${kind === 'app' ? `; GNOME shell rendered in it ${shell}` : ''}`);
       } finally {
         await context.close().catch(() => {});
       }

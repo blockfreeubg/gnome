@@ -19,7 +19,8 @@ node engine/run.mjs --only host-nav --parts spa,downloads --no-build   # reuse t
 | `--parts x,y` | passed to the suites as `ctx.parts` (each suite documents its parts in its header) |
 | `--no-build` / `--dist <dir>` | reuse an existing build / build into (or reuse) this directory |
 | `--build-server` | `cargo build --release -p gnome-server` first (`CARGO_BUILD_JOBS` defaults to 3) |
-| `--offline` | `ctx.offline = true`: suites skip rows that need the internet |
+| `--offline` | `ctx.offline = true`: suites skip rows that need the internet; `ubo-resources` from the pinned `fixtures/blocker/lists/ubo-resources.json` |
+| `--blocker-real` | the server keeps its built-in filter lists (internet, WAVE-B3 §12.3) instead of the test lists; `ctx.blockerReal` |
 | `--strict` | exit 1 when a row failed that is not `expectFail` |
 
 What a run starts (all on 127.0.0.1, every port from the environment, see below): HolyWisp with a copy of
@@ -27,8 +28,16 @@ What a run starts (all on 127.0.0.1, every port from the environment, see below)
 allow-loopback overlay) behind the VPN profile `e2e-vpn`; a profile `e2e-dead` whose upstream never runs;
 gnome-server (`serve`, app + proxy + admin listeners, fresh data dir under the run directory); the spike's local
 target site (`spike-engine-host/servers/target.mjs`, reachable only through `/wisp/p/e2e-vpn/`) and leak sentinel
-(the browsers' proxy for every non-loopback host, so pages reach the internet only through Wisp). It stops all of it
-at the end (also on Ctrl+C) and prints `all runner ports are free again`.
+(the browsers' proxy for every non-loopback host, so pages reach the internet only through Wisp); the content-blocker
+fixture server (`servers/blocker-fixtures.mjs`, reachable only through `/wisp/p/e2e-vpn/`) and a per-run
+`GNOME_FILTER_LISTS_FILE` (`lib/blocker.mjs`): built-in lists off, the lanes' `fixtures/blocker/lists/*.txt`, the
+generated big list and `ubo-resources`. After the server starts it waits up to 120 s (300 s with `--blocker-real`)
+for the lists. It stops all of it at the end (also on Ctrl+C) and prints `all runner ports are free again`. At the
+end of a run the runner removes the big list's copies from the run directory (about 28 MB; `lib/blocker.mjs`
+`bigListText()` regenerates them byte for byte). The check after the build applies Wave B step 3's import rules
+(`lib/build-check.mjs` `STEP3_ENGINE_ALLOWED` and `STEP3_APP_FORBIDDEN`, the same lists `suites/build.mjs` uses) and
+prints the first problems. Every build offers the `blocker` capability (WAVE-B3 D19's build-time switch
+`GNOME_ENGINE_TEST_CAPABILITIES` was removed by the step-3 integration).
 
 Output: `<E2E_RESULTS_DIR>/<timestamp>/results.md` and `results.json` (default `tests/e2e/engine/results/`), the
 server and HolyWisp logs; the build goes to `<E2E_RESULTS_DIR>/dist` (or `E2E_DIST_DIR`, `--dist`).
@@ -48,6 +57,10 @@ server and HolyWisp logs; the build goes to `<E2E_RESULTS_DIR>/dist` (or `E2E_DI
 | `HOLYWISP_RUNNER` | `host` | `host` (static binary as this user) or `docker` (the spike's locked-down, unprivileged container) |
 | `HOLYWISP_BIN` | `services/holywisp/build/<arch>/holywisp` | |
 | `CHROMIUM_EXECUTABLE`, `FIREFOX_EXECUTABLE` | the Playwright cache | other browser builds |
+| `E2E_BLOCKER_PORT` | `E2E_PORT_BASE` + 50 | the content-blocker fixture server (`servers/blocker-fixtures.mjs`) |
+| `E2E_BLOCKER_FIXTURES_DIR`, `E2E_BLOCKER_LISTS_DIR` | `fixtures/blocker`, `fixtures/blocker/lists` | its pages and the test lists |
+| `E2E_BLOCKER_TRANSPORT` | `libcurl` | `epoxy`: `blocker-network` and `blocker-uv` open their driver pages with the epoxy transport (WAVE-B3 §12.4 "once more with epoxy"); every row records it |
+| `TMPDIR` | the system's | Playwright puts browser profiles under `os.tmpdir()`: point it off a RAM `/tmp` for long runs |
 
 ## Writing a suite
 
@@ -81,7 +94,7 @@ export async function run(ctx) {
 | `openApp(context, query?)` | opens the **e2e driver page** (`<app origin>/e2e-driver/`) and waits for `init`; returns an `App` |
 | `record({test, result, engine?, transport?, notes?, expectFail?, data?})` | one result row; `result` is `pass`, `fail` or `skip` |
 | `log(...)`, `sleep(ms)` | |
-| `parts`, `offline` | `--parts` list (null = all) and `--offline` |
+| `parts`, `offline`, `blockerReal` | `--parts` list (null = all), `--offline` and `--blocker-real` |
 | `records` | every row recorded so far in this run |
 | `build` | `{problems, buildId, engineHost, built}` of this run's build; `engineHost`: whether `engine/index.html` was built |
 | `contract` | the exports of `src/shared/proxy-origin.ts` and `engine-protocol.ts` (+ `transport`: `transport.ts`), loaded with Vite |
@@ -92,7 +105,16 @@ serves), `profiles` (`{live: 'e2e-vpn', dead: 'e2e-dead'}`), `deadProfile`, `tar
 local site; reach it with the driver's `route: 'profile:e2e-vpn'`), `sentinel` (`{origin, since(t)}`: direct requests
 that reached it), `serverLog()`, `restartServer(env?)` (restart gnome-server with extra variables, e.g.
 `{GNOME_ACCESS_MODE: 'code', GNOME_ACCESS_CODE: '1234'}`; `{}` restores the defaults; the data directory and so the
-sessions survive), `upstream(name)` → `{stop(), start()}` for `'direct'` or `'e2e-vpn'`.
+sessions survive), `upstream(name)` → `{stop(), start()}` for `'direct'` or `'e2e-vpn'`, and `blocker` (Wave B step 3):
+`{mode 'test'|'real', offline, port, fixtures: {requests({since, label, path, method}), beacons({label, id}),
+ws({since}), mark(), reset()}, labels, hosts, origin(label), url(label, path), toml, listsDir, lists: [{id, name,
+category, trusted, default, maxMb, file, source}], expect, ready: {ok, ms, listing, missing, unavailable, unexpected},
+listing(), waitForLists(opts), writeList(id, text), refreshLists({ids, via: 'cli'|'admin'})}`. Fixture URLs:
+`http://<label>.localhost:<E2E_BLOCKER_PORT>/<lane>/<path>` (labels `site-a site-b ads trk cdn bad docblock idp`;
+endpoints `/`, `/echo`, `/set-cookie`, `/cookies`, `/ws`, `/beacon`, `/redirect`, `/policy`); reach them only with
+the route `profile:e2e-vpn`. The big list's id is `big` (default off; S4, V10 and U11 turn it on). A test list's
+first line: `! gnome-e2e: id=<id> category=<ads|privacy|annoyances|cookies|urlparams|security> trusted=<bool>
+default=<bool> [name=<text>] [max_mb=<1-64>]`.
 
 ### The driver page and `App`
 
@@ -104,7 +126,8 @@ the real `<proxy origin>/engine/` with the sandbox and `allow` of ENGINE-PROTOCO
 real app at `/`). Query keys of `openApp(context, query)`: `engine` (`auto`|`scramjet`|`ultraviolet`), `transport`
 (`libcurl`|`epoxy`), `route` (`default`|`profile:<id>`|`custom:<url,url>`), `fallback` (`0`|`1`), `webrtc`
 (`block`|`allow`), `ticket=0` (init without a ticket), `autoTicket=0` (the suite answers `needTicket` itself),
-`engines` (offered engines), `combos` (forwarded shortcuts).
+`engines` (offered engines), `combos` (forwarded shortcuts), `blockerKey=<64 lower-case hex>` (→ `init.blockerKey`),
+`clearSiteData=1` / `clearCookies=1` (→ `init.clearOnStart`).
 
 `App` keeps the spike's API (`spike-engine-host/lib/drive.mjs`): `waitInit()`, `cmd(type, payload, timeout?)` (a raw
 protocol command), `mark()`, `eventsSince(seq)`, `waitFor(since, pred, timeout)` (events are `{seq, t, type, p}`),

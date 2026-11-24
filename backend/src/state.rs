@@ -155,6 +155,14 @@ impl AppState {
         Ok(state)
     }
 
+    /// Await every module's `prepare` in mount order (WAVE-C D21). Called by `server::serve_all` before
+    /// `start_jobs()`, by the `catalog` CLI, and by the test harness after `open_with`.
+    pub async fn prepare_modules(&self) {
+        for module in self.modules() {
+            module.prepare(self).await;
+        }
+    }
+
     /// Enabled modules in mount order.
     pub fn modules(&self) -> &[Arc<dyn Module>] {
         self.inner.modules.get().map_or(&[], Vec::as_slice)

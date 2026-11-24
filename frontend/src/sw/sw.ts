@@ -26,7 +26,21 @@ import { startSwBlocker } from '../extensions/sw/blocker';
 import type { SwContext } from '../extensions/sw/blocker';
 import { SwEngines } from '../extensions/sw/engines';
 import { EngineHostRegistry } from '../extensions/sw/hosts';
-import { UV_SCRIPT_COOKIE_DESTINATIONS, blankUvScriptCookies, swProviders, verdictBlocksCookies } from '../extensions/sw/providers';
+import {
+  UV_SCRIPT_COOKIE_DESTINATIONS,
+  blankUvScriptCookies,
+  cookieRuleFor,
+  cookiesBlocked,
+  fixUvCookies,
+  isThirdParty,
+  reduceReferrer,
+  sitePolicy,
+  swProviders,
+  uvFetchMetadata,
+  uvSameSiteRequest,
+  verdictBlocksCookies,
+} from '../extensions/sw/providers';
+import type { UvCookieContext } from '../extensions/sw/providers';
 import { validateEngineSettings } from '../shared/engine-protocol';
 import {
   PROXY_PATHS,
@@ -238,6 +252,10 @@ const uv = new UVServiceWorker();
 const fetchEvents = new WeakMap<Request, FetchEvent>();
 /** UV requests whose answer is a document UV did not rewrite (SCRIPTLESS_CSP), by the request UV sees. */
 const scriptless = new WeakSet<Request>();
+/** The SameSite context of the UV request whose uv.fetch() starts now (uv.config.construct reads it synchronously). */
+let constructing: UvCookieContext | null = null;
+/** Per Ultraviolet instance (= per request): its SameSite context, for the `request` event. */
+const cookieContexts = new WeakMap<object, UvCookieContext | null>();
 
 // The document-start hook goes into every HTML document UV rewrites through UV's own injection (pure.ts
 // injectDocumentHook): UV's service worker calls `config.construct(instance, 'service')` on each instance it creates.
@@ -250,6 +268,11 @@ const scriptless = new WeakSet<Request>();
       warned = true;
       log('this Ultraviolet build has no createHtmlInject: its documents are served without scripts');
     }
+    // Lane x3's SameSite glue: UV's cookie serialization becomes a browser's (SameSite, path, Secure, the cookie
+    // manager's blocked document), with the context the fetch handler set in the same synchronous step.
+    fixUvCookies(instance, constructing);
+    cookieContexts.set(instance as object, constructing);
+    constructing = null;
   };
 }
 
@@ -296,6 +319,18 @@ uv.on('request', (event) => {
     const next = referrerFor(ref, ctx.url.href, ctx.request.referrerPolicy);
     if (next === null) delete ctx.headers.referer;
     else ctx.headers.referer = next;
+  }
+  // Lane x3's SameSite glue: fetch metadata as a browser sends it (only with a known initiator), and a tab a page asked
+  // for gets the opener's Referer (GNOME loaded it, so the browser sent none). Before the hooks, so the privacy
+  // provider's floor and the cookie provider's rules still apply. [unproven] a page's rel=noreferrer / 'noreferrer'
+  // open: tab.openRequest carries no such flag, so the opener's origin is sent where a browser sends none.
+  const cc = cookieContexts.get(ctx.ultraviolet as object) ?? null;
+  if (cc) {
+    for (const [k, v] of uvFetchMetadata(cc.request, ctx.request.mode) ?? []) ctx.headers[k] = v;
+    if (cc.request.isTopLevelDocument && cc.request.initiator && ctx.headers.referer === undefined) {
+      const r = reduceReferrer(cc.request.initiator, ctx.url.href, 'default');
+      if (r !== null) ctx.headers.referer = r;
+    }
   }
   const verdict = safeVerdict(swHooks(), requestInfo(ctx), (err) => log(`onRequest hook: ${String(err)}`));
   if (verdict.action === 'block') {
@@ -459,14 +494,28 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
         .then(() => blocker.context(event, req))
         .then(async (c) => {
           contexts.set(seen, c);
-          const res = await uv.fetch({ request: seen } as unknown as FetchEvent);
+          // Lane x3's SameSite glue: the request's SameSite context, read by uv.config.construct, which UV calls
+          // synchronously inside uv.fetch before its first await.
+          const real = blocker.realOf(req.url);
+          const navigation = c.isTopLevelDocument || dest === 'document' || dest === 'iframe' || dest === 'frame';
+          const navInitiator = navigation ? blocker.initiatorOf(req.url, req.referrer || null) : null;
+          if (real !== null) {
+            const ss = uvSameSiteRequest({ url: real, method: req.method.toUpperCase(), destination: dest, ...c }, navInitiator);
+            const party = isThirdParty(real, ss.topLevelUrl);
+            const s = blocker.settings();
+            const documentBlocked = cookiesBlocked(sitePolicy(s, ss.topLevelUrl), cookieRuleFor(s, real), party);
+            constructing = { request: ss, documentCrossSite: party !== false, documentBlocked };
+          }
+          const pending = uv.fetch({ request: seen } as unknown as FetchEvent);
+          constructing = null;
+          const res = await pending;
           // A tab-top navigation answered with a redirect (UV's rewritten Location, or GNOME's own 307 of parameter
           // stripping): the next hop is the tab's own document too (D3), recorded before the browser follows it.
           if (c.isTopLevelDocument && res.status >= 300 && res.status < 400) {
             const location = res.headers.get('location');
             if (location) {
               try {
-                blocker.redirected(c, new URL(location, req.url).href);
+                blocker.redirected(c, new URL(location, req.url).href, navInitiator);
               } catch {
                 /* an unusable Location: the browser does not follow it either */
               }

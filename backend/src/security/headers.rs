@@ -15,6 +15,11 @@ use crate::config::Config;
 use crate::origins::Role;
 use crate::state::AppState;
 
+/// `Cross-Origin-Opener-Policy` (not among `http::header`'s constants).
+pub const CROSS_ORIGIN_OPENER_POLICY: HeaderName = HeaderName::from_static("cross-origin-opener-policy");
+/// `Permissions-Policy`.
+pub const PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
+
 /// HSTS value used when `GNOME_HSTS=true` (sent only on HTTPS responses, as RFC 6797 requires).
 pub const HSTS_VALUE: &str = "max-age=31536000";
 
@@ -54,7 +59,15 @@ impl SecurityHeaders {
             set_default(headers, header::CONTENT_SECURITY_POLICY, default);
             return;
         }
-        set_default(headers, header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
+        // HTML that gets the shell policy is never framed (its `frame-ancestors 'none'`, WAVE-C D4).
+        let shell = is_html(headers) && !headers.contains_key(header::CONTENT_SECURITY_POLICY);
+        let frame_options = if shell { "DENY" } else { "SAMEORIGIN" };
+        set_default(headers, header::X_FRAME_OPTIONS, HeaderValue::from_static(frame_options));
+        if is_html(headers) {
+            // WAVE-C D3: popups that escape a game's sandbox lose `window.opener`; powerful features stay off.
+            set_default(headers, CROSS_ORIGIN_OPENER_POLICY, HeaderValue::from_static(csp::OPENER_POLICY));
+            set_default(headers, PERMISSIONS_POLICY, HeaderValue::from_static(csp::PERMISSIONS_POLICY));
+        }
         if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
             if is_html(headers) {
                 headers.insert(header::CONTENT_SECURITY_POLICY, self.shell.enforce.clone());
@@ -107,12 +120,16 @@ mod tests {
         assert!(html[header::CONTENT_SECURITY_POLICY].to_str().unwrap().contains("script-src"));
         assert_eq!(html[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(html[header::REFERRER_POLICY], "no-referrer");
-        assert_eq!(html[header::X_FRAME_OPTIONS], "SAMEORIGIN");
+        assert_eq!(html[header::X_FRAME_OPTIONS], "DENY");
+        assert_eq!(html[CROSS_ORIGIN_OPENER_POLICY], "same-origin");
+        assert_eq!(html[PERMISSIONS_POLICY], csp::PERMISSIONS_POLICY);
+        assert!(html[header::CONTENT_SECURITY_POLICY].to_str().unwrap().ends_with("frame-ancestors 'none'"));
         let mut json = HeaderMap::new();
         json.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
         sh.apply(&mut json, false, Role::App);
         assert_eq!(json[header::CONTENT_SECURITY_POLICY], FRAME_ANCESTORS_ONLY);
         assert!(!json.contains_key(header::STRICT_TRANSPORT_SECURITY));
+        assert!(!json.contains_key(CROSS_ORIGIN_OPENER_POLICY) && !json.contains_key(PERMISSIONS_POLICY));
     }
 
     #[test]
@@ -136,6 +153,7 @@ mod tests {
         h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'"));
         sh.apply(&mut h, false, Role::App);
         assert_eq!(h[header::CONTENT_SECURITY_POLICY], "default-src 'none'");
+        assert_eq!(h[header::X_FRAME_OPTIONS], "SAMEORIGIN", "HTML with its own policy (the game wrapper)");
     }
 
     #[test]
@@ -149,6 +167,7 @@ mod tests {
         html.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
         sh.apply(&mut html, false, Role::Proxy);
         assert!(!html.contains_key(header::X_FRAME_OPTIONS));
+        assert!(!html.contains_key(CROSS_ORIGIN_OPENER_POLICY) && !html.contains_key(PERMISSIONS_POLICY));
         assert_eq!(
             html[header::CONTENT_SECURITY_POLICY],
             "default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self' https://gnome.example.com"
@@ -158,11 +177,11 @@ mod tests {
         let mut app = HeaderMap::new();
         app.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
         sh.apply(&mut app, false, Role::App);
-        assert_eq!(app[header::X_FRAME_OPTIONS], "SAMEORIGIN");
+        assert_eq!(app[header::X_FRAME_OPTIONS], "DENY");
         let csp = app[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
         assert!(
-            csp.contains("; frame-src blob: https://p.gnome.example.com;"),
-            "only the engine host may be framed: {csp}"
+            csp.contains("; frame-src blob: 'self' https://p.gnome.example.com;"),
+            "only the engine host and the game wrapper may be framed: {csp}"
         );
     }
 }

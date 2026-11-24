@@ -82,16 +82,16 @@
     description={offered === false || problem === 'none'
       ? 'This server has no VPN gateway configured.'
       : customWisp
-        ? 'Custom Wisp servers are set under Advanced: they bypass the gateway, so the VPN has no effect until you remove them.'
+        ? 'Custom Wisp servers are not used while the VPN is on.'
         : undefined}
   >
     {#snippet control()}
       <SegmentedControl
-        label="VPN gateway"
+        label="VPN"
         value={v.mode}
         options={[
           { value: 'off', label: 'Off' },
-          { value: 'gateway', label: 'Gateway', disabled: unavailable },
+          { value: 'gateway', label: 'On', disabled: unavailable },
         ]}
         onchange={(val) => set('mode', val)}
       />

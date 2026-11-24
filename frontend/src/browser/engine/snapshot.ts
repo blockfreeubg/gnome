@@ -38,8 +38,10 @@ export interface SnapshotContext {
   /** The engine host reported the `blocker` capability (Wave B step 3): only then are the per-site maps sent. */
   blocker: boolean;
   apple: boolean;
-  /** `/api/vpn/locations` statuses by profile id, when the app has them. */
+  /** `/api/vpn/locations` statuses by profile id, when the app has them (vpn/state.svelte.ts statusMap(), D14). */
   vpnStatus?: Readonly<Record<string, 'up' | 'down' | 'unknown'>>;
+  /** The Automatic location this app page pinned (D17): kept while it is offered and not `down`. */
+  autoPinned?: string | null;
   /** The filter-list refs (extensions/app/lists.ts filterListRefs); none while the app has no listing. */
   lists?: readonly FilterListRef[];
   /** The app page's site exposure (WAVE-B3 D5): which allowlist/per-site entries may travel. Without it, none do. */
@@ -58,6 +60,8 @@ export interface RouteChoice {
   vpnFellBack: boolean;
   /** Custom servers are set but not used (the VPN is on, or the operator does not allow them). */
   customIgnored: 'vpn' | 'operator' | null;
+  /** With the Automatic location (`preferredLocation` null): the location it picked (the app page pins it), else null. */
+  autoPicked: string | null;
 }
 
 export function chooseRoute(s: Settings, ctx: SnapshotContext): RouteChoice {
@@ -65,18 +69,33 @@ export function chooseRoute(s: Settings, ctx: SnapshotContext): RouteChoice {
   if (s.vpn.mode === 'gateway') {
     const offered = (ctx.config?.wisp.profiles.map((p) => p.id) ?? []).filter((p) => PROFILE_ID_RE.test(p));
     const preferred = s.vpn.preferredLocation;
-    const id = preferred && PROFILE_ID_RE.test(preferred) ? preferred : (offered[0] ?? null);
+    const status = (id: string): 'up' | 'down' | 'unknown' => ctx.vpnStatus?.[id] ?? 'unknown';
+    let id: string | null;
+    let autoPicked: string | null = null;
+    if (preferred && PROFILE_ID_RE.test(preferred)) {
+      // A chosen location is never replaced by another one (D17).
+      id = preferred;
+    } else {
+      // Automatic (D17): the pinned one while offered and not down; else the first one up; else the first offered.
+      const pinned = ctx.autoPinned ?? null;
+      id =
+        (pinned !== null && offered.includes(pinned) && status(pinned) !== 'down' ? pinned : null) ??
+        offered.find((p) => status(p) === 'up') ??
+        offered[0] ??
+        null;
+      autoPicked = id;
+    }
     // A location the server no longer offers (/api/config, refreshed after `unknown-profile`) is as unavailable as
     // one /api/vpn/locations reports down.
     const available = id !== null && (!ctx.config || offered.includes(id)) && ctx.vpnStatus?.[id] !== 'down';
     const customIgnored = servers.length ? 'vpn' : null;
     // The kill switch never leaves the profile route: an unavailable location then loads nothing, as it promises.
-    if (s.vpn.killSwitch) return { route: { kind: 'profile', id: id ?? NO_VPN_LOCATION }, vpnFellBack: false, customIgnored };
-    if (available) return { route: { kind: 'profile', id }, vpnFellBack: false, customIgnored };
-    return { route: { kind: 'default' }, vpnFellBack: true, customIgnored };
+    if (s.vpn.killSwitch) return { route: { kind: 'profile', id: id ?? NO_VPN_LOCATION }, vpnFellBack: false, customIgnored, autoPicked };
+    if (available && id !== null) return { route: { kind: 'profile', id }, vpnFellBack: false, customIgnored, autoPicked };
+    return { route: { kind: 'default' }, vpnFellBack: true, customIgnored, autoPicked: null };
   }
-  if (servers.length && ctx.config?.wisp.custom_servers) return { route: { kind: 'custom', servers }, vpnFellBack: false, customIgnored: null };
-  return { route: { kind: 'default' }, vpnFellBack: false, customIgnored: servers.length ? 'operator' : null };
+  if (servers.length && ctx.config?.wisp.custom_servers) return { route: { kind: 'custom', servers }, vpnFellBack: false, customIgnored: null, autoPicked: null };
+  return { route: { kind: 'default' }, vpnFellBack: false, customIgnored: servers.length ? 'operator' : null, autoPicked: null };
 }
 
 /** `browser.wispServers` entries the protocol accepts, in order, each once, at most LIMITS.maxWispServers. */

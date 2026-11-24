@@ -1,5 +1,4 @@
-// Builds the frontend for the e2e runner: `npm run build:e2e` (GNOME_ENGINE_TEST=1, and
-// GNOME_ENGINE_TEST_CAPABILITIES=blocker unless the environment sets it: WAVE-B3 D19) into a directory of the run,
+// Builds the frontend for the e2e runner: `npm run build:e2e` (GNOME_ENGINE_TEST=1) into a directory of the run,
 // then the e2e driver page (lib/driver/) into `<dist>/e2e-driver/`, then the build test's checks (build-check.mjs).
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -62,9 +61,8 @@ export async function buildFrontend({ dist, log = console.log, contract }) {
   const t0 = Date.now();
   log(`building the frontend (npm run build:e2e) into ${dist} ...`);
   try {
-    // WAVE-B3 D19: e2e builds offer the content blocker through the build-time switch (frontend/vite.config.ts
-    // turns it into __GNOME_ENGINE_TEST_CAPABILITIES__), unless the environment sets the variable (empty = without).
-    const env = { GNOME_ENGINE_TEST_CAPABILITIES: 'blocker', ...process.env, GNOME_DIST_DIR: dist };
+    // Every build offers the content blocker since the Wave B step 3 integration (D19's build-time switch is gone).
+    const env = { ...process.env, GNOME_DIST_DIR: dist };
     await run('npm', ['run', 'build:e2e'], { cwd: FRONTEND_DIR, env, maxBuffer: 64 << 20 });
   } catch (err) {
     throw new Error(`npm run build:e2e failed:\n${String(err.stdout ?? '').slice(-3000)}\n${String(err.stderr ?? '').slice(-3000)}`);

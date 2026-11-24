@@ -279,7 +279,7 @@ describe('content blocking, app side (WAVE-B3 §7.1)', () => {
     expect(lastSettings().extensions.allowlist).toEqual([]);
   });
 
-  it('does not register the extensions feature in builds without D19’s switch', () => {
-    expect(isFeatureActive('extensions')).toBe(false);
+  it('registers the extensions feature once the browser started (blocker offered since the step-3 integration)', () => {
+    expect(isFeatureActive('extensions')).toBe(true);
   });
 });

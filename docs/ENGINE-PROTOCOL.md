@@ -74,7 +74,7 @@ What they can do **[proven]** (spike §11.2 attack ids A1–C3, §3 item 3; corr
 | App storage, credentialed state-changing app API, the app's top window, a forged message the app accepts from a non-host frame (A1–A4) | no | no (`host-isolation`; `host-attack handshake-forgeries`, `host-inject-forged-hello`) |
 | WebRTC straight to the network, revealing the user's IP (C1) | **yes** without the kill switch; with it, not from its own realm or ordinary fresh frames, but **yes** for a page that polls a frame while it navigates, and the other gaps of §6.15 | **yes**, through the same gaps |
 | Join, read and write any BroadcastChannel of the proxy origin whose name it knows (so v1 never uses a fixed name: SW signals use `Client.postMessage`, and the UV socket tap reaches the engine hosts without one, §6.6, ARCHITECTURE §5.4) | yes | yes |
-| Take over the engine-host realm, read the Wisp ticket and every app→engine message, capture the port and forge any engine→app event (B6) | no through its engine; **yes** through `borrow-natives` | **yes** |
+| Take over the engine-host realm, read the Wisp ticket and every app→engine message, capture the port and forge any engine→app event (B6). Since Wave C (D23) the ticket it reads works only on the route the app chose: it cannot move a VPN user's traffic to the direct route (`wisp_ticket_wrong_route`, `wisp_ticket_superseded`; `vpn-ui` V21) | no through its engine; **yes** through `borrow-natives` | **yes** |
 | Read and change other tabs' documents, form values, storage (B1) | no through its engine; **yes** through `borrow-natives` | **yes** |
 | Read both cookie jars including HttpOnly cookies, plant cookies for any site (B2, B3) | Scramjet: own client's jar; UV: `__op` is not renamed; everything through `borrow-natives` | **yes** |
 | Unregister or replace the service worker, register its own (B7) | no through its engine (`navigator.serviceWorker` is removed in proxied pages); **yes** through `borrow-natives` | **yes** (it can persist across engine-host reloads) |
@@ -109,6 +109,22 @@ and to panic answers, and the SW's own pages carry `SW_PAGE_CSP` (`default-src '
 'none'`). A reverse proxy's own error pages are not covered yet (Wave D: its header limit must stay above what
 browsers send).
 
+**Wave B step 3 (measured 2026-11-20/21, rows A0, A3b, A7 and 'CORS (measured)' of `blocker-attack`, Chromium 156
+and Firefox 157 × both engines).** An ordinary page still reaches the engine host through a fresh child realm's
+native `parent`, through a child realm's native `frameElement` getter called on its own window, and (Scramjet) through
+Scramjet's client global: UV's own unhooked `frameElement` path is closed (the F2 wrapper in each document's realm),
+the rest stays open (A0, expectFail). A UV page cannot post blocker messages (it has no `navigator.serviceWorker`
+controller, and the registry refuses proxied client ids) and receives no GNOME signals (A3b). A UV page that loads
+bare-mux's client into an unhooked about:blank realm opens WebSockets past GNOME's wrapper: the blocked host received
+the upgrade (A7, expectFail; closing it needs a check in bare-mux's SharedWorker transport). Neither engine enforces
+CORS: page `fetch` and XHR read cross-site responses that carry no CORS headers, the upstream gets the right `Origin`
+and `Referer`, and a non-simple `PUT` arrives with no preflight; Ultraviolet derives `Origin` from the referrer, so a
+no-referrer page sends none. Under the default `block-third-party` cookie mode such reads carry no cookies of the
+target (K15); under mode `all` a page can read another site's credentialed responses. CORS emulation was not built:
+it needs the preflight in both engines, a correct Origin under UV and a realm the page cannot share, and a wrong one
+breaks real sites (WAVE-B3 integration decision). Any UV page can also open the proxy origin's `__op` IndexedDB and
+read or plant every site's cookies, HttpOnly included.
+
 ### 1.2 Rules that follow
 
 1. **The app validates everything it receives** from the engine host: every event (`validateEventMessage`), every
@@ -127,7 +143,9 @@ browsers send).
    (escaped code, §1.1) can make any tab show any URL, title or content, and can forge the answer of `vpn.verify`. The UI must never present the
    address bar as proof of a site's identity or the exit check as proof that traffic leaves through the VPN (the
    app takes "VPN active" from its own facts, §6.13), and must never promise isolation between proxied sites or IP
-   protection against hostile pages (ARCHITECTURE §4.6).
+   protection against hostile pages (ARCHITECTURE §4.6). The exit check that pages cannot forge is the server's own
+   check through the location's HolyWisp (§6.13, `exit` in `/api/vpn/locations`); it reports what the check service
+   saw, which is still not proof that every page's traffic took that path.
 4. **The app may send** (and must assume a hostile page reads all of it): the engine settings snapshot
    (`EngineSettings`: engine choice, fallback, transport, Wisp route including custom Wisp server URLs when the
    operator allows them, privacy toggles, content-blocking toggles, filter-list ids and hashes, shortcut combos and
@@ -136,9 +154,11 @@ browsers send).
    permission list), find queries, zoom factors, context-menu actions, cookie and site-data commands, the VPN check
    URL, and, only while `browser.searchSuggestions` is on, the address-bar text it wants suggestions for. The
    content blocker's per-site maps (`extensions.allowlist`, `perSite`, `cookieRules`) name every site the user made
-   a rule for: the app sends them empty until the engine host reported the `blocker` capability (Wave B step 3), and
-   from then on their exposure to a realm a hostile page can own is the stated cost of blocking inside the engine
-   host; step 3 narrows them if its design allows.
+   a rule for: the app sends them empty until the engine host reported the `blocker` capability (Wave B step 3).
+   Step 3 narrows them (WAVE-B3 D5): `allowlist`/`perSite` carry only the sites the engine host shows or is about to
+   load (at most 20 newly exposed rule-bearing sites per tab per minute and 120 per app page per hour; paused for the
+   page after two compromise signals), `cookieRules` the whole map while the cookie manager is on (cookies are judged
+   by the cookie's own site, so it cannot be scoped). What is sent is readable by a page that reaches the engine host.
 5. **The app never sends**: the session cookie or any other app credential, account data (user name, id), history,
    bookmarks, the downloads list, the per-site permission list, other users' data, the access code, sync state,
    games data, or settings outside `EngineSettings`. Discarded tabs' URLs are sent only when the tab is restored.
@@ -159,6 +179,16 @@ browsers send).
    passive notice with a button, and only that button or a navigation the user starts in the browser view (gestures
    in GNOME's own UI) opens the dialog (§6.5). A hostile page must not be able to summon GNOME's credential prompts
    on cue.
+10. **Realm hygiene (WAVE-B3 rule R1).** A proxied page is same-origin with the engine host, so any engine-host
+   object it reaches hands it the engine-host global (`fn.constructor('return this')()`). Every line that touches a
+   proxied document uses the page-realm kit (`src/engine-host/realm.ts`) and keeps its three rules: (1) nothing GNOME
+   installs in a page realm is an engine-host object (functions, getters and setters come from the kit, errors are
+   `kit.error(…)`, data properties hold primitives; option dictionaries handed to the browser have no prototype and
+   page-realm values only, because Web IDL dictionaries are read member by member, inherited members too: row
+   `cs-late R1`); (2) engine-host code never runs page code once page code may have run in that realm (page objects
+   are read through the engine host's natives or kit code that returns primitives or JSON); (3) no engine-host
+   callback receives page nodes (no engine-host `MutationObserver` or `TreeWalker` over a page). R1 keeps GNOME from
+   opening a path of its own; it does not close the paths of §1.1.
 
 ## 2. Handshake and lifecycle
 
@@ -386,7 +416,7 @@ frame's `allow` attribute can enforce.
 
 | Command | Payload | Result | Notes |
 | --- | --- | --- | --- |
-| `init` | `{settings: EngineSettings, ticket: Ticket \| null, clearOnStart: {cookies, siteData}}` | `{instance, status, versions, capabilities, enforcedPermissions, timings}` | first and once per port (a second one: `bad_state`). `clearOnStart` clears proxied cookies / all proxied site data before the engines start (§6.11). A null ticket leaves the transports `offline` / `ticket-missing` |
+| `init` | `{settings: EngineSettings, ticket: Ticket \| null, clearOnStart: {cookies, siteData}, blockerKey?}` | `{instance, status, versions, capabilities, enforcedPermissions, timings}` | first and once per port (a second one: `bad_state`). `clearOnStart` clears proxied cookies / all proxied site data before the engines start (§6.11). A null ticket leaves the transports `offline` / `ticket-missing` |
 | `settings` | `{settings: EngineSettings}` | `{}` | a full snapshot, never a patch; the engine host applies what changed (transport kind or route: rebuild; privacy, keys: next use) |
 | `ticket` | `Ticket {value, expiresAt, wispUrl}` | `{}` | answer to `needTicket` or a proactive renewal (§6.5). `wispUrl` is informational: the engine host builds its URLs from the route |
 | `status` | `{}` | `EngineHostStatus` | after the app dropped `status` events, and on resume |
@@ -409,12 +439,14 @@ frame's `allow` attribute can enforce.
 | `cookies.delete` | `{all, site, name}` | `{deleted}` | capability `cookies`: `all: true` takes no site or name; otherwise `site`, and `name` null = every cookie of the site |
 | `siteData.clear` | `{kinds: ('cookies' \| 'storage' \| 'cache')[]}` | `{}` | capability `siteData`: for every proxied site, both engines |
 | `suggest` | `{query, provider}` | `{items: string[]}` | capability `suggest`: search suggestions through the proxy transport, never through GNOME's server (§6.12) |
+| `blocker.stats` | `{}` | `BlockerStats {engineVersion, builtAt, buildMs, source, engines, lists, cache, resources}` | capability `blocker`, 10 s timeout: the compiled set's facts (per group sizes, per list state and error code, the cache against `cacheLimitMB`) for the Extensions page; codes only, never display text |
+| `blocker.reload` | `{}` | `{}` | capability `blocker`, 10 s timeout: rebuild from the lists of the last snapshot (fresh downloads); the old set keeps blocking until the new one is in force, and `status.blocker.state` stays `ready` (WAVE-B3 D7) |
 | `vpn.verify` | `{url}` | `{ip, country, city, vpnExit, checkedAt}` | capability `vpnVerify`: loads the exit check (`/api/vpn/locations` → `verify_url`) through the current route; the answer is not proof (§6.13) |
 
 Removed from the draft: `tab.discard` (= `tab.close` + restore), `tab.contextAction` (the app does what it can itself,
 the rest is `tab.action` / `tab.download`), `download.cancel` (the browser owns downloads), `permission.reply` (no
-engine-side prompts in v1, §6.14), `blocker.reload` / `blocker.stats` (the settings snapshot carries the lists; counts
-arrive as `tab.blocked`). Removed by the contract fix: `EngineSettings.permissions` (the per-site list; replaced by
+engine-side prompts in v1, §6.14). `blocker.reload` / `blocker.stats` were removed in the draft and came back in Wave
+B step 3 (§8.8): the snapshot cannot carry compiled-list or cache facts. Removed by the contract fix: `EngineSettings.permissions` (the per-site list; replaced by
 the per-load `permissions`) and the `permissions` capability (replaced by `enforcedPermissions`).
 
 `EngineSettings` (built by the app from its settings and `/api/config`; `validateEngineSettings` checks it):
@@ -427,7 +459,7 @@ interface EngineSettings {
   transport: 'libcurl' | 'epoxy';                             // browser.transport, both engines
   route: { kind: 'default' } | { kind: 'profile'; id } | { kind: 'custom'; servers };  // §6.6
   privacy: { webrtc: 'block' | 'allow'; sendGpc; doNotTrack; referrer; stripTrackingParams; cookies };
-  extensions: { enabled; lists: FilterListRef[]; allowlist; perSite; cosmeticAggressive; cookieRules };   // step 3
+  extensions: { enabled; lists: FilterListRef[]; allowlist; perSite; cosmeticAggressive; cookieRules; cacheLimitMB? };   // step 3
   keys: { combos: string[]; apple: boolean };                 // §6.7
 }
 ```
@@ -437,18 +469,29 @@ interface EngineSettings {
 with the default Ultraviolet becomes `ultraviolet` (no automatic fallback; the error overlay offers Scramjet); a chosen
 engine the server disables gives way to the one it offers.
 
-`route`: `profile` with `vpn.preferredLocation` when `vpn.mode` is `gateway` (the VPN, once turned on, always wins:
-custom servers would bypass it, so they are not used then and Settings says so); otherwise `custom` when
-`/api/config` → `wisp.custom_servers` is true and `browser.wispServers` has entries the protocol accepts
-(`isWispServer`; in order, duplicates removed; paths are on the proxy origin); otherwise `default`. The app enforces
-`vpn.killSwitch` by choosing the route: the engine host never switches routes by itself. With the kill switch off and
-the selected location down (`/api/vpn/locations`), the app may switch to `default` and says so in a toast; with it on,
-it never leaves the profile route.
+`route`: `profile` when `vpn.mode` is `gateway` (the VPN, once turned on, always wins: custom servers would bypass
+it, so they are not used then and Settings says so); otherwise `custom` when `/api/config` → `wisp.custom_servers` is
+true and `browser.wispServers` has entries the protocol accepts (`isWispServer`; in order, duplicates removed; paths
+are on the proxy origin); otherwise `default`. The profile is `vpn.preferredLocation`, or with **Automatic** (`null`,
+Wave C D17) the first offered location whose health status is `up`, **pinned** for this app page while it is offered
+and not `down` (`chooseRoute(ctx)` with `SnapshotContext.autoPinned`; `RouteChoice.autoPicked`); with none up, the
+first offered one. When the pinned location goes down and another is picked, the app toasts "VPN location changed: <A>
+is down. Now using <B>." **A chosen location is never replaced by another one**: unusable → the kill switch blocks,
+else the default route. The app enforces `vpn.killSwitch` by choosing the route: the engine host never switches routes
+by itself. With the kill switch off and the location down (`/api/vpn/locations`), the app may switch to `default` and
+says so in a toast; with it on, it never leaves the profile route. **Exit checks never change the route** (§6.13): the
+route depends only on the settings and the health `status`. Every route change comes with a ticket minted for the new
+route (§6.5).
 
 The snapshot builder (WAVE-B lane c) sends only values the validator accepts, so a saved setting can never make
 `init` fail: combos in canonical form, each once (two actions bound to one combo send it once; `isCombo`); Wisp
 servers filtered with `isWispServer`; the extension site maps empty until `blocker` is offered (§1.2 rule 4);
-`privacy.webrtc` forced to `block` under the VPN kill switch. A property test checks that every Settings value
+`privacy.webrtc` forced to `block` under the VPN kill switch. Wave B step 3: `init.blockerKey` is 64 lower-case hex
+characters (the app's random key K for the blocker cache's MAC; absent = no cache), `extensions.cacheLimitMB` 16–8192
+(absent = 256); `status.blocker.detail` is a code only (`lists-failed:<failed>:<total>`,
+`over-cache-limit:<bytes>:<limit>`, `cache-rejected`, `failed:<all-lists-failed|worker-crashed|out-of-memory|build-error>`;
+parsed by `src/extensions/core/detail.ts`); `EngineDiagnostics.blocker` = `{hookErrors, wsBackstopBlocked,
+wsBackstopSkipped, announceWaits, announceTimeouts}` (counters). A property test checks that every Settings value
 `validate.ts` accepts produces a snapshot `validateEngineSettings` accepts.
 
 ## 5. Events (engine host → app)
@@ -468,11 +511,18 @@ animated favicons, ticker titles) never hit the app's limits. Pushes and cross-d
 never merged. Before any other event of a tab, that tab's pending coalesced values are sent first, so the order per
 tab is kept.
 
+**Wave B step 3 (measured, 2026-11-20/21).** `tab.loading {loading: true, url}` announces a known destination (a GNOME
+load, a Scramjet tab request, a trusted non-cancelled navigate event); at most 2 per tab per second, never coalesced.
+The app answers every one with a settings snapshot. A tab's own Scramjet request for a host not yet answered waits
+≤ 150 ms for that answer [proven: Scramjet awaits tap promises; row N17]. `tab.blocked` counts start with each
+navigation of the tab (its first request), are sent again after each cross-document `tab.committed`, and count a
+blocked URL once per page (engine host per tab, service worker per document; a document's navigation starts it again).
+
 | Event | Payload | App reaction | Gesture | Burst / per s |
 | --- | --- | --- | --- | --- |
 | `status` | `EngineHostStatus {engines, transport, sw, blocker}` | status registry (`src/app/status.ts`: `engine`, `transport`), engine badge, transport and update notices (§2.5, §6.6) | no | 20 / 10 |
 | `needTicket` | `{reason: 'expiring' \| 'rejected' \| 'missing'}` | `POST /api/wisp/ticket` within the app's limits, then `ticket`; a mint that needs sign-in shows only a passive notice (§6.5) | no (app rate limits); the sign-in dialog: yes | 3 / 0.2 |
-| `tab.loading` | `{tabId, loading}` | spinner, loading bar (indeterminate: there is no progress source) | no | 20 / 10 |
+| `tab.loading` | `{tabId, loading, url?}` | spinner, loading bar (indeterminate: there is no progress source); with `url` (Wave B step 3) the app exposes that site's rules (D5) and answers with a settings snapshot | no | 20 / 10 |
 | `tab.committed` | `{tabId, navId, url, engine, kind, historyHandling, index, length, canGoBack, canGoForward, ms}` | address bar, back/forward buttons, the app's copy of the entries (session restore), history visit through `VisitGate` (§6.1) | no | 20 / 10 |
 | `tab.loaded` | `{tabId, navId, url, engine, ms}` | ends loading; never sent for a navigation that became a download | no | 10 / 5 |
 | `tab.title` | `{tabId, title}` | tab title (text), history title | no | 20 / 10 |
@@ -481,7 +531,7 @@ tab is kept.
 | `tab.engineSwitched` | `{tabId, navId, from, to, reason, latencyMs}` | engine badge, a toast "Opened with Ultraviolet because Scramjet failed" | no | 3 / 0.5 |
 | `tab.openRequest` | `{openerTabId, url, disposition, userActivation}` | `decideOpen` (§6.3): open a tab (at most `LIMITS.maxTabs`), or the "pop-up blocked" indicator | without a gesture in the page and the app: yes (the indicator) | 3 / 0.5 per opener |
 | `tab.closeRequest` | `{tabId}` | closes the tab only if a page opened it and it has one history entry, as browsers do; ignored otherwise | no | 2 / 0.5 |
-| `tab.blocked` | `{tabId, total, byCategory}` | shield badge, counts per site; `direct-connection` = CSP-blocked direct requests (§6.16); coalesced | no | 8 / 4 |
+| `tab.blocked` | `{tabId, total, byCategory}` | shield badge, counts per site; `direct-connection` = CSP-blocked direct requests (§6.16); `total` = Σ `byCategory` including `direct-connection`; coalesced | no | 8 / 4 |
 | `tab.contextMenu` | `{tabId, x, y, target}` | the app's own context menu at the iframe offset + (x, y) (§6.8); ignored while the browser view is hidden or a dialog is open | every item: yes (a menu click) | 4 / 2 |
 | `tab.key` | `{tabId, combo, repeat}` | runs the shortcut bound to `combo` if `combo` is one the app sent, `tabId` is the active tab and the browser view is visible; actions that open or close tabs or GNOME UI also need the app's own transient activation (§6.7) | see §6.7 | 30 / 15 |
 | `tab.fullscreen` | `{tabId, active}` | the page put an element in fullscreen (the engine iframe is the app's fullscreen element): hide the app's chrome, show the exit hint | no | 4 / 2 |
@@ -705,6 +755,18 @@ classified). HTTP error pages of sites are not errors: they render. The last err
   life; lazy renewal per kind; pages load"). The 10 s floor is unit-tested only (`ticketRenewDelayMs`).
 - **Rejected [proven]**: when a probe answers 401 (`wisp_ticket_*`) the engine host emits
   `needTicket {reason: 'rejected'}`.
+- **Route-bound tickets (Wave C D23) [proven]**: the app mints for the route of the current `chooseRoute` result
+  (`requestWispTicket({interactive, route})` sends `{"route": "default"}` or `{"route": {"profile": "<id>"}}`; a
+  coalesced batch never mixes routes, a pending mint for another route is superseded). A route change mints a new
+  ticket for the new route before (or with) the snapshot that switches it and hands it over with `ticket`; while
+  `vpn.mode` is `gateway` a default-route ticket is minted only when the kill switch is off and the route really fell
+  back. The gateway refuses a ticket on another route (`wisp_ticket_wrong_route`), one minted before the server
+  started (`wisp_ticket_stale`: after a server restart every engine host re-mints through `needTicket {reason:
+  'rejected'}`), and a default-route ticket older than the session's latest profile-route mint
+  (`wisp_ticket_superseded`), and its 15 s re-check closes the session's open default-route connections that rule now
+  refuses (API.md). `vpn-ui` V21 checks the three answers from the app page; `backend/tests/wisp_tickets.rs` the
+  20 s close and the restart. Connections on a previous *profile* route are not closed (they end when their page
+  reloads; the VPN page counts those tabs, WAVE-C O16).
 - The app requests at most one ticket per 2 s and 10 per minute (the server allows 30 per minute per session) and
   answers with the `ticket` command. A `needTicket` that arrives inside those limits is **deferred and coalesced**
   with any pending one, never dropped: with a 60 s TTL the spike's app dropped the request and nothing renewed the
@@ -965,17 +1027,33 @@ as text. The engine host owns the endpoint table and must verify each endpoint.
 
 ### 6.13 VPN exit check
 
-**[proven]** against `am.i.mullvad.net` through the default route (`host-capabilities capability:vpn.verify`, libcurl
-and epoxy, both browsers; the machine's IP is kept out of the results). **[unproven]** through a real VPN tunnel
-(Wave C, with an operator's account).
+Two checks exist, and neither is proof (§1.2 rule 3). Both run **only when the operator set a check service**
+(`GNOME_VPN_CHECK_URL`, empty by default, Wave C D15: GNOME calls no third-party service by itself).
 
-Capability `vpnVerify`: `vpn.verify {url}` with `/api/vpn/locations` → `verify_url` (`https://am.i.mullvad.net/json`)
-fetches it through the current route with `proxyFetch` and returns `{ip, country, city, vpnExit, checkedAt}`
-(`vpnExit` from `mullvad_exit_ip`, null when the service does not say). **The answer is not proof** (§1.2 rule 3):
-a page that reaches the engine host (§1.1) can forge all of it, and the validator checks only its shape. The VPN page (Wave C) shows it
-as what the check service reports ("The check service sees 185.… in Sweden"), never as a security badge, and takes
-"VPN active" from the app's own facts: the route it chose is that location's profile, and `/api/vpn/locations` (app
-origin) has the location `up`.
+- **The server's check** (D14): gnome-server checks each location's exit through that location's own HolyWisp (Wisp
+  v1 + TLS + one GET, `User-Agent: exit-check/1`) on a schedule and on request; the result is `exit` in
+  `/api/vpn/locations` (shown only to clients the access policy admits). Proxied pages cannot forge it. A failed
+  check is a warning on the VPN page and never changes the route or the connection state (§4 `route`).
+- **This browser's check**: capability `vpnVerify`, `vpn.verify {url}` with `/api/vpn/locations` → `verify_url`
+  (`null` without a check service) fetches it through the current route with `proxyFetch` and returns `{ip, country,
+  city, vpnExit, checkedAt}` (`vpnExit` from a `mullvad_exit_ip`-style field, null when the service does not say). The
+  app calls it through `browser.verifyExit(url)` only while `vpn.verifyExit` is on (**default off**) and a check service
+  is set: after each connect or route change once the engine host is ready, and on **Check again**. A page that
+  reaches the engine host (§1.1) can forge all of it, and the validator checks only its shape; the transport report
+  (`status` of the profile side) is just as forgeable.
+
+**Wording rule**: results are shown as what the check service reported ("<service> reports <ip> in <country>";
+`provider_exit` only as "<service> says this address is one of its VPN exits: yes / no", and only when the field is
+present), never as a security badge. "Connected" comes from the app's own facts — the route the app chose is that
+location's profile and `/api/vpn/locations` has the location `up` — and from the gateway's enforcement (route-bound
+tickets, §6.5). This browser's check is followed by "A page that broke out of GNOME's browser engine can fake this
+answer."; when its address differs from the server's check of the same location the page warns ("This browser's check
+answered differently from the server's check of <label>. …"); agreement shows no extra wording and is never presented
+as confirmation.
+
+**[proven]** through a profile route to a stand-in location (a second HolyWisp) and a local check fixture (`vpn-ui`
+V16, Chromium and Firefox; `backend/tests/vpn_exit.rs` for the server's check). **[unproven]** through a real VPN
+tunnel (WAVE-C O7, needs an operator's account).
 
 ### 6.14 Permissions
 
@@ -1150,6 +1228,52 @@ step-2 code already calls with `ALLOW_ALL` (`engine-hooks.ts`):
 - Escaped code shares the realm with the hooks and can disable them, and any page can become escaped code through
   `borrow-natives` (§1.1): blocking protects against sites that do not target GNOME, never against one that does.
 
+**As built in Wave B step 3 (2026-11-21; WAVE-B3, rows of §7).** The UV service-worker hooks are exercised by the
+blocker suites (`blocker-network`, `blocker-uv`, `blocker-privacy`, `blocker-cookies`).
+
+- One registration: the composite (`src/extensions/core/compose.ts`: `network` + `cookies` + `privacy` + `cosmetic`).
+  A tab document (every redirect hop) is judged under its own URL (D3). Resources (`$redirect`) are answered 200 for
+  subresources only; an unrewritten script stub would leave the proxy, so Ultraviolet's JS rewrite of a stub is
+  required (row N6b). `documentUrl`/`referrer` as in WAVE-B3 C6; `ResponseHeaders.append` for multi-value headers.
+  UV `onDocument` runs at UV's `self.__uvHook = …` assignment (a kit accessor), Scramjet's at `init.post`; nested UV
+  documents get it too (CS10).
+- Service worker (§4.5 of WAVE-B3): the messages `gnome-blocker-config` (with `setId`), `gnome-blocker-engines` and
+  `gnome-blocker-context` (`docs`, `navs`, `drop`, `reset`, and the optional `inits`) count only from engine-host
+  client ids (F3); `uv-blocked` carries per-document counts. The engine host sends `gnome-blocker-engines` whenever an
+  Ultraviolet load starts and the SW does not have the set in force from it (after a swap or `sw-hello`). The SW
+  consumes an announced navigation when it uses it; a tab-top navigation's 3xx `Location` (and GNOME's own 307) is
+  recorded as the tab's next hop, judged under itself (D3) and counted under the announced URL; the SW waits ≤ 50 ms
+  for the `navs` of a referrer-less navigation.
+- `inits` (lane x3's SameSite glue, integration step): `[proxied URL, initiator]` of loads the engine host starts in
+  Ultraviolet: `''` for GNOME's own loads, the opener's real URL for a tab a page asked for, the page's real URL for a
+  fetch the engine host makes for a page (favicon, download). One-shot, 30 s. The SW computes each UV request's
+  SameSite context from it (else from the referrer's recorded document, else unknown = cross-site) and replaces
+  Ultraviolet 3.2.10's cookie serialization (which matched only the end of the host name and ignored path, `Secure`
+  and SameSite) with `uvCookieHeader` in `uv.config.construct` (`fixUvCookies`); it adds `Sec-Fetch-Site/-Mode/-Dest`
+  only when the initiator is known, and the opener's reduced `Referer` to a tab a page opened. SameSite follows
+  Chromium's rules (Lax by default, `None` needs `Secure`, two-minute Lax+POST) in both browsers; a redirect hop keeps
+  its navigation's initiator. Rows K13 and `host-smoke fixture:page-chosen-requests-carry-the-page-as-initiator` pass
+  under Ultraviolet. [unproven] a page's `rel=noreferrer` / `'noreferrer'` open: `tab.openRequest` carries no such
+  flag, so the opener's origin is sent where a browser sends none (also Scramjet's `withInitiator`).
+- Privacy (x3): the privacy provider also has `onResponse`: it remembers each document's `Referrer-Policy` (per
+  document URL, and per tab for the tab's own document; redirect answers excepted) so subresources, frame navigations
+  and tab navigations follow the initiating page's policy. The cookie provider is the only provider that removes
+  `cookie`; the SW uses that (`verdictBlocksCookies`) to give a blocked UV document or worker an empty script-cookie
+  string (`blankUvScriptCookies`, row K3c). The cookie provider's `onResponse` rewrites `Set-Cookie` through
+  `ResponseHeaders.append`, one line per cookie; it never splits a line. Scramjet serves documents as `unsafe-url`
+  and ignores a `<meta name="referrer">` for its HTML's elements (row P6m, expectFail; GNOME's origin floor holds).
+- Cosmetic filtering (rows CS1–CS18, A2 and cs-late; Chromium 156 and Firefox 157 × Scramjet and Ultraviolet):
+  hiding, `:style()`, generic rules and GNOME's monitor, frames with their own site rules in both engines (CS10),
+  exceptions (`$generichide`, `$elemhide`, `#@#`), trust, the WAVE-B3 §11.4 argument vectors (PWNED stays unset,
+  values arrive as data), scriptlets before page scripts with the engine's virtual location, cookie jar and storage,
+  `nowoif`, a page removing GNOME's stylesheet changing only its own document (A2), documents that open before the
+  engines are ready, the `<style>` fallback, and R1 rule 2 (a page's recording Proxies receive nothing of the
+  engine-host realm; adopted sheets are page-realm) [proven]. `PageKit.observe` gives the browser an options object
+  without a prototype and with page-realm values only: `MutationObserverInit` is converted member by member,
+  inherited members too (cs-late R1). The build sends each `:style()` rule's declarations to `validateSelectors`
+  (`opts.styles`), so root/body `:style()` rules that only restore the page are kept (N19). Hiding rules that select
+  links by `href` never match: both engines rewrite the attribute (cs-href, expectFail).
+
 ### 6.18 Diagnostics
 
 `diagnostics` returns counters only (`EngineDiagnostics`): instance, uptime, status, versions, capabilities, enforced
@@ -1199,8 +1323,20 @@ behind a redirect; print with a real dialog; autoplay enforcement in Firefox (no
 157) and clipboard enforcement in any browser (Chromium's policy leaves `document.execCommand('copy')`); in-page navigations keeping the permission decisions; the UV service-worker hooks;
 a real VPN tunnel. Measured limits (`expectFail` rows): `host-attack borrow-natives` (§1.1), `host-webrtc
 webrtc:block:gaps-open` (§6.15), `host-smoke fixture:page-chosen-requests-carry-the-page-as-initiator` under
-Ultraviolet (§1.1, §6.1), `host-capabilities permission:autoplay` in Firefox and `permission:clipboard` in both
+Ultraviolet until Wave B step 3's SameSite glue (§6.17; it passes since), `host-capabilities permission:autoplay` in Firefox and `permission:clipboard` in both
 browsers (§6.14), and `sw sharedworker` under Scramjet in Firefox (§6.16).
+
+**After Wave B step 3** (2026-11-21; Chromium 156 and Firefox 157 × both engines; rows of WAVE-B3 §12): the
+content blocker through the real app and the driver: network blocking with the test lists and the generated
+550,000-line list (rows N*, S*, V10), the MAC'd cache and its attacks (S1–S10), the UV service-worker half with page
+context, redirect hops, engines by message and SW restarts (V1–V11), cosmetic filtering and scriptlets in both
+engines (CS1–CS18, cs-late), privacy headers, Referer floors and parameter stripping (P1–P12), the cookie manager
+including SameSite for Ultraviolet and a real fresh start (K1–K15), the app UI (U1–U13), and the attack rows
+(A1–A7). Measured limits (`expectFail`): A0, A7, cs-href, P4 (Firefox × Scramjet), P6m (Scramjet), P12 (Firefox);
+V8 `skip` in Firefox × Ultraviolet. Real sites (`blocker-sites --blocker-real`, Chromium, the server's default lists
+built in 1.5 s): every ad- and tracker-heavy site that loaded through GNOME showed blocks under Scramjet; under
+Ultraviolet www.businessinsider.com loaded with 0 blocks in two runs (Scramjet: 12), cause not determined; the other
+zero-block sites were bot walls (DataDome, "blocked by network security", 403). Not run here: a Raspberry Pi 4.
 
 ## 8. Changes
 
@@ -1370,3 +1506,19 @@ which also failed its first re-run; the same error hit other `host-leak sites` a
 natively through HolyWisp, cause unknown); one history-visit timeout in Chromium (`library-visits`); and
 `shell-sw-update` "with the other tab closed, Reload applies the update" in Firefox (§2.5 now says the apply step
 can take a second reload).
+
+### 8.8 Integration of Wave B step 3 (2026-11-21)
+
+Additive, `PROTOCOL_VERSION` stays 1:
+
+- `InitPayload.blockerKey?` (64 lower-case hex), `EngineSettings.extensions.cacheLimitMB?` (16–8192, default 256),
+  the commands `blocker.stats` and `blocker.reload` (capability `blocker`, 10 s), `EngineDiagnostics.blocker`,
+  `status.blocker.detail` codes (§4); `tab.loading.url` and `tab.blocked.total` = Σ `byCategory` (§5).
+- Proxy-origin messages (`src/shared/proxy-origin.ts`): `gnome-blocker-config` (+ `setId`), `gnome-blocker-engines`,
+  `gnome-blocker-context` (with the optional `inits` of the SameSite glue, at most 64 entries), and the SW signal
+  `uv-blocked` with per-document counts (§6.17).
+- The capability `blocker` is offered by every build (`OFFERED_CAPABILITIES`); WAVE-B3 D19's e2e build switch
+  (`GNOME_ENGINE_TEST_CAPABILITIES`, `__GNOME_ENGINE_TEST_CAPABILITIES__`) is gone, and the app registers the
+  `extensions` feature right after `browser`.
+- §1.1 and §1.2 gained the step-3 measurements, the scoped site maps (rule 4) and realm hygiene (rule 10).
+

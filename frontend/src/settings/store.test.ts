@@ -132,6 +132,13 @@ describe('reading and writing', () => {
     expect(settings.value.appearance.homeBackground.kind).toBe('gradient');
   });
 
+  it('import keeps this browser’s vpn.mode and vpn.killSwitch (device-local, docs/WAVE-C.md D12)', () => {
+    const file = createDefaultSettings();
+    file.vpn = { ...file.vpn, mode: 'gateway', killSwitch: false, preferredLocation: 'se-sto' };
+    expect(settings.import(JSON.stringify({ format: 'gnome-settings', version: 1, settings: file })).ok).toBe(true);
+    expect(settings.value.vpn).toMatchObject({ mode: 'off', killSwitch: true, preferredLocation: 'se-sto' });
+  });
+
   it('import keeps this browser’s sync switches (device-local, never taken from a file)', () => {
     const file = createDefaultSettings();
     file.account = { sync: true, syncHistory: true, syncBookmarks: true, syncSettings: true };

@@ -13,99 +13,100 @@ base64 (cursor signing), tokio `time` (sleep), tracing. No TLS, HTTP or image st
 
 ## Integration with gnome-server
 
+gnome-server's `games` module (`backend/src/games/`, docs/WAVE-C.md §4) wires this crate in. What it builds:
+
 ### Startup
 
-```rust
-let (cfg, warnings) = gnome_catalog::CatalogConfig::from_env(|k| std::env::var(k).ok())?;
-for w in warnings { tracing::warn!("{w}") }                  // e.g. "gamedistribution stays disabled: set …"
-let catalog = Arc::new(gnome_catalog::Catalog::new(cfg, &secret_key_bytes, gnome_catalog::RenderOptions {
-    app_origin: public_app_origin,                           // GameDistribution's referrer = <app origin>/games/<slug>
-    proxy_origin: proxy_origin_or_app_origin,                // serves /oss/<slug>/… (self-hosted games)
-    thumb_proxy: config.thumb_proxy,                         // GNOME_THUMB_PROXY
-}));
-// MIGRATIONS (versions 100 and 101) are applied by the server's runner (db/migrate.rs) — nothing to do here.
-let cat = catalog.clone();
-gnome_catalog::WriteDb::write(&db, move |c| cat.prepare(c, now_ms())).await?;   // once, before serving
-```
-
-(`Db` also has an inherent `write`, which wins method resolution — call the trait method as shown, or use the
-inherent one with your own error conversion.)
-
-`prepare` marks runs left `running` by a crashed process as `interrupted`, applies the enabled-source set and dedup
-order (recomputing duplicate groups when they changed), re-maps stored records from their raw JSON when the
-normalization rules or the blocklist changed, and refreshes facet counts and rankings.
+`games::install` builds one `Catalog` from `Config::catalog` (this crate's `CatalogConfig::from_env` over the server's
+merged settings, so a `GNOME_CONFIG` file accepts every variable) with `RenderOptions { app_origin, proxy_origin,
+thumb_proxy }`. The server gates two sources further: `oss` needs a separate proxy origin (never served from the app
+origin), `gamedistribution` a known app origin (its referrer URL). `Module::prepare` (awaited before the first
+request, the jobs and the CLI) runs `Catalog::prepare` on the writer, rescans the OSS builds and computes the first
+frame-policy report; until it has run without error every games route answers `503 unavailable` + `Retry-After: 30`.
 
 ### Traits the server implements
 
 | Trait | Server implementation |
 | --- | --- |
-| `Fetcher` | gnome-net's SSRF-safe client: send the request as given, enforce `max_body_bytes` and `timeout`, decompress, return every HTTP status as `Ok` (304/429/5xx included) and only transport failures as `Err` (`Timeout`, `BodyTooLarge`, `Network` = retryable, `Blocked` = egress policy). Follow no redirects, or a few with re-validation (the feeds do not redirect). |
-| `WriteDb` | Over `Db::write`: `async fn write<T, F>(&self, f: F) -> Result<T, CatalogError> { Db::write(self, move \|c\| Ok::<_, DbError>(f(c))).await.map_err(\|e\| CatalogError::Storage(e.to_string()))? }` (the trait requires the future to be `Send`) — exactly this shape is exercised by `tests/server_like.rs` (Tokio mutex + `spawn_blocking`, WAL file, import on `tokio::spawn`, reads on a `query_only` connection). |
-| `Clock` | `gnome_catalog::TokioClock` (provided). |
+| `Fetcher` | `games::fetcher::CatalogFetcher` over gnome-net's `SafeClient`: strict IP policy, no proxies, redirects re-validated, host allow-list = `Source::feed_hosts` of the enabled sources (thumbnails: `ThumbPolicy::hosts`, one redirect). `Timeout`/`BodyTooLarge` map 1:1, policy refusals → `Blocked`, the rest → `Network`. |
+| `WriteDb` | `impl WriteDb for gnome_server::db::Db` (the README shape: `Db::write` + `spawn_blocking`, `DbError` → `CatalogError::Storage`). |
+| `Clock` | `TokioClock`; the CLI's `--replay` uses a pinned clock whose sleeps return at once. |
 
-`FixtureFetcher` + `ManualClock` (also exported) make server-side tests independent of the network and of real
-time; `impl WriteDb for std::sync::Mutex<Connection>` runs closures inline (tests, CLI).
+### Routes (app origin; public in every access mode)
 
-### Routes (public listener, app origin)
+| Route | Call |
+| --- | --- |
+| `GET /api/games?q=&category=&tag=&sort=&mobile=1&exclude=&include_link_out=1&cursor=&limit=` | `catalog.list` (`ListQuery::exclude`: ≤ 20 category slugs, unknown ones ignored and not bound into the cursor) |
+| `GET /api/games/sections?mobile=1&exclude=` | `catalog.sections(conn, 24, &ListFilter)` |
+| `GET /api/games/categories?include_link_out=1` | `catalog.categories` |
+| `GET /api/games/tags?prefix=&limit=` | `catalog.tags` (limit 1–100, default 30) |
+| `GET /api/games/by-ids?ids=` | `catalog.by_ids` (≤ 200, order kept) |
+| `GET /api/games/status` | `catalog.stats` + `import_runs`: `listed`, `playable`, `importing`, per source its name and last finished run |
+| `GET /api/games/:slug?mobile=1&exclude=` | `catalog.game(conn, slug, 12, &ListFilter)` plus `embed_allowed` (the server's frame policy) and `oss` (`repository`, `commit`, `license_file_url`) |
+| `POST /api/games/:slug/play` | `catalog.record_play` with an HMAC of the session reference (else of the client IP, IPv6 /64) |
+| `GET /api/thumb/:id` | `catalog.thumbnail_source` → the server's thumbnail cache (type and magic bytes checked, disk LRU, `thumb`/`thumb_fetch` rate classes) |
+| `GET /play-frame/:slug` | the per-game wrapper document (`games::frames`): one iframe of the game under its own `frame-src` |
+| `GET /ads.txt` | the operator's `GNOME_ADS_TXT` file |
 
-| Route | Call | Connection |
-| --- | --- | --- |
-| `GET /api/games?q=&category=&tag=&sort=&mobile=&cursor=&limit=` | `catalog.list(conn, &ListQuery { .. })` → `ListPage {items, next_cursor, total}`. Add `include_link_out=1` support if the UI wants itch.io/js13k entries in lists (default: playable only). | reader |
-| `GET /api/games/sections` | `catalog.sections(conn, 24)` | reader |
-| `GET /api/games/categories` | `catalog.categories(conn, false)` → `[{slug,name,count}]` (14 core always, optional ones when used) | reader |
-| `GET /api/games/tags?prefix=&limit=` | `catalog.tags(conn, prefix, limit, false)` | reader |
-| `GET /api/games/by-ids?ids=1,2,3` | `catalog.by_ids(conn, &ids)` (≤ 200; order kept; missing omitted) | reader |
-| `GET /api/games/:slug` | `catalog.game(conn, slug, 12)` → `Option<GamePage {game, related}>`; `None` → 404 | reader |
-| `POST /api/games/:slug/play` | `catalog.record_play(conn, slug, dedup_key, now)` with `dedup_key` = e.g. HMAC(secret, session_ref); `NotFound` → 404; `Counted`/`Duplicate` → 204 | writer |
-| `GET /api/thumb/:id` | `catalog.thumbnail_source(conn, id)` → validated upstream URL or 404; fetch with the `Fetcher`, accept only `thumbs::is_allowed_content_type` and ≤ `thumbs::MAX_THUMB_BYTES`, serve with `nosniff`, `Content-Security-Policy: default-src 'none'`, `Cache-Control: public, max-age=604800`, cache on disk (`GNOME_THUMB_CACHE_MB`). | reader |
+Query-parameter problems answer **`400 bad_request`** with a message naming the parameter (`limit must be 1-100`,
+`unknown category: <slug>`, `unknown sort: <value>`, `invalid cursor`, `cursor does not belong to this query`,
+`q is limited to 100 characters`, `at most 20 categories can be excluded`, `ids must be comma-separated integers`,
+`at most 200 ids`, `tag prefix is limited to 40 characters`); the crate's `InvalidInput` texts are exactly these.
+`NotFound` → 404; storage errors → 503.
 
-`CatalogError::InvalidInput` (bad cursor/category/limit, tampered cursor) → `400 validation_failed`;
-`NotFound` → 404; `Db`/`Storage` → 500.
+GameDistribution's `{page_url}` renders `<app origin>/play/<slug>` (the page the visitor sees).
 
-Response shapes map 1:1 onto `docs/API.md` `GameSummary` / `GameDetail` (they `Serialize` to exactly those keys),
-plus additive fields the UI needs: `playable` (summary and detail; `false` = link-out only, open `source_url` in a new
-tab and **never** iframe it), `embed_kind` (`iframe`/`selfhost`/`link`), `orientation`, `flags` (`kids_friendly`,
-`no_blood`, `no_cruelty`, `iap`, `paid`). `embed_url` is ready to use: publisher IDs and the GameDistribution page
-URL are filled in at render time from the current configuration (rows store templates such as
-`…/embed?sid={gamepix_sid}`), self-hosted games point at `<proxy origin>/oss/<slug>/<entry>`.
+### Frame policy
+
+An iframe game is framed only when its embed URL is `https:`, has a plain path (`Url::has_plain_path`: no `.`/`..`
+segment, no `%2e`/`%2f`/`%5c`; such records are also rejected at import) and its host is a fixed
+`Source::embed_hosts` entry of an enabled source or a host the operator approved in `GNOME_GAMES_EMBED_HOSTS` — never
+the instance's own app or proxy host. `Catalog::embed_host_counts` feeds the `pending`/`refused` report in
+`/admin/diagnostics` → `games.embed_hosts` (recomputed after imports, admin changes and every 5 minutes).
 
 ### Admin listener
 
 | Route | Call |
 | --- | --- |
-| `GET /admin/diagnostics` → `"catalog"` | `catalog.stats(conn)` → `{games, listed, by_source: {<source>: {enabled,total,listed,active,hidden,broken,ip_risk,duplicates,last_import}}, last_import, rankings_refreshed_at}` |
-| `POST /admin/catalog/import` `{"sources"?, "limit"?}` | spawn `catalog.import(&fetcher, &TokioClock, &db, source, ImportOptions { limit, max_pages: None })` per source (or `import_enabled`), return `202 {job_id}`; `CatalogError::Busy` means a run of that source is in progress |
-| `GET /admin/catalog/imports` | `catalog.import_runs(conn, None, 50)` |
-| `POST /admin/games/:id/feature` `{"featured": bool}` | `catalog.set_featured(conn, id, featured, now)` (writer) |
-| `POST /admin/games/:id/status` `{"status": "active"\|"hidden"\|"broken"\|null}` | `catalog.set_status(conn, id, AdminStatus::parse(..))` (writer). `active` also overrides an `ip_risk` match; `null` clears the override |
+| `GET /admin/diagnostics` → `catalog`, `games` | `catalog.stats`; frame report, thumbnail cache, OSS builds |
+| `POST /admin/catalog/import` `{"sources"?, "limit"?}` | background `catalog.import` per source → `202`; `409` while one runs; `422` for unknown/disabled sources or a bad limit |
+| `GET /admin/catalog/imports?source=&limit=` | `catalog.import_runs` |
+| `POST /admin/catalog/oss-fetch` `{"slugs"?}` | the OSS fetch below → `202`; `409`; `422` |
+| `POST /admin/games/:id/feature` / `…/status` | `catalog.set_featured` / `catalog.set_status` |
 
 ### Jobs and CLI
 
-| Job / command | Call |
+| Job / command | Work |
 | --- | --- |
-| `catalog-import`, every `GNOME_CATALOG_REFRESH_HOURS` (default 24, first run shortly after start) | `catalog.import_enabled(&fetcher, &TokioClock, &db, ImportOptions::default())`; afterwards recompute the CSP `frame-src` list with `catalog.embed_hosts(conn)` |
-| `catalog-rankings`, hourly | `catalog.refresh_rankings(conn, now)` (writer; also purges expired play-dedup keys) |
-| `gnome-server catalog import [--source S] [--limit N]` | `catalog.import(.., Source::from_id(S), ImportOptions { limit: N, .. })` — limited runs never count as complete |
-| `gnome-server catalog stats` | `catalog.stats(conn)` printed as JSON |
+| `catalog.import` (every 10 min, first after 30 s) | each enabled HTTP source whose last finished run is older than `GNOME_CATALOG_REFRESH_HOURS` (failed runs retry after min(1 h × 2^(n−1), the interval)); `oss` whenever its served builds change (also with `GNOME_CATALOG_REFRESH_HOURS=0`) |
+| `catalog.rankings` (hourly) | `catalog.refresh_rankings` (purges play-dedup keys) |
+| `catalog.policy` (every 5 min) | frame report, cached stats, thumbnail files of games no longer listed |
+| `catalog.oss-fetch` (daily, first after 20 s; `GNOME_OSS_FETCH=auto` only) | fetch missing or outdated OSS builds |
+| `gnome-server catalog import [--source S]… [--limit N] [--replay index.json]` | one JSON report per run; exit 1 for a failed or busy run, 2 for usage errors |
+| `gnome-server catalog stats` / `catalog fetch-oss [--slug S]…` | `catalog.stats` as JSON / the OSS fetch |
 
-An import returns `Err` only for database problems, a disabled source or a concurrent run. Feed problems end the run
-with status `failed` or `incomplete` (see the report's `error`/`note`); they are logged and stored in
-`catalog_imports`, and never hide games.
-
-### Content-Security-Policy
-
-`frame-src`: `catalog.embed_hosts(conn)` — the fixed embed hosts of the enabled sources plus any host a visible game
-embeds from (a few Playgama games embed from their developer's own HTTPS host). `img-src`: with the thumbnail proxy
-off, `catalog.thumb_policy().hosts()`. Self-hosted games: the proxy origin.
+`--replay` (development and tests) answers the importers from captured responses listed in an index file (paths
+relative to it; `now` pins the clock; `config` sets `per_page`, `category`, `max_pages`, `first_year` for the replay
+only); an unmatched request fails at once with `Blocked("no fixture for …")`.
 
 ### Self-hosted open-source games
 
-`oss-games.toml` lists only the repositories verified in research §8.2 (pinned commit, licence file, copyright line,
-entry file — all re-checked on 2026-11-10). 11 are `enabled` (static: the checkout runs as-is); the rest are listed
-with `enabled = false` and the reason (build step, server component, analytics, not a finished game). An entry is
-imported only when `$GNOME_OSS_GAMES_DIR/<slug>/<entry>` exists, so the catalog never lists a game that cannot load.
-The server (next step) should provide the fetch step (`git clone` + checkout of the pinned `commit` into that
-directory, LICENSE kept) and serve `<proxy origin>/oss/<slug>/` from it — never from the app origin.
+`oss-games.toml` lists the repositories verified in research §8.2. An entry is fetched and served only when it is
+`enabled`, `build = "static"` and carries `reviewed` — the review of its pinned commit (no storage clearing, no
+service-worker registration, no `innerHTML`/`eval` fed from the URL, hash, referrer or `postMessage`, no external
+loads; docs/WAVE-C.md D5). The 2026-11-23 review left five enabled (`2048`, `javascript-racer`,
+`javascript-breakout`, `bullethell` with `isolated = true`, `clumsy-bird`); `hexgl`, `a-dark-room` and `hextris` failed
+it and the three that load code from CDNs are disabled, each with the reason in `notes`. Optional flags: `isolated`
+(an opaque-origin sandbox), `pointer_lock`, `gamepad`; `local = true` marks an operator's own build (no `repo`, no
+`commit`, never fetched; `license_file` and `copyright` required).
+
+gnome-server fetches each pinned commit from `https://codeload.github.com/<owner>/<repo>/tar.gz/<commit>` through the
+SafeClient (≤ 64 MiB download, ≤ 129 MiB decompressed, regular files and directories only, links and devices skipped,
+sparse/volume/unknown entries and oversized PAX or long-name records refused, `..`, absolute and `.git/` paths
+refused, ≤ 20,000 entries and 128 MiB per game, `GNOME_OSS_MAX_MB` in total) into a temporary directory that replaces
+`$GNOME_OSS_GAMES_DIR/<slug>/` atomically, and serves it on the **proxy origin** at `/oss/<slug>/…` — the `entry` file
+only to frame loads (`Sec-Fetch-Dest: iframe`), no other HTML or XML file of a build, every answer under a policy at
+least as strict as `PROXIED_DOCUMENT_CSP` — never from the app origin.
 
 ## Configuration
 

@@ -51,7 +51,7 @@ async fn open_mode_creates_the_session_on_the_fly() {
     let v = res.json();
     let t = ticket_of(&v);
     let p = parts(&t);
-    assert_eq!((p.len(), p[0].as_str(), p[2].len(), p[3].len()), (4, "w1", 22, 43), "{t}");
+    assert_eq!((p.len(), p[0].as_str(), p[3].as_str(), p[4].len(), p[5].len()), (6, "w2", "d", 22, 43), "{t}");
     let exp_ms = v["expires_at"].as_i64().unwrap();
     assert_eq!(exp_ms, p[1].parse::<i64>().unwrap() * 1000, "expires_at is the ticket's expiry in ms");
     let hour = 3_600_000;
@@ -64,10 +64,10 @@ async fn open_mode_creates_the_session_on_the_fly() {
     let again = c.post("/api/wisp/ticket", json!({})).await;
     assert_eq!(again.status, StatusCode::OK);
     assert!(again.set_cookie("gnome_sid").is_none());
-    assert_eq!(parts(&ticket_of(&again.json()))[2], p[2]);
+    assert_eq!(parts(&ticket_of(&again.json()))[4], p[4]);
     // Another browser: another ref.
     let other = app.client().post("/api/wisp/ticket", json!({})).await.json();
-    assert_ne!(parts(&ticket_of(&other))[2], p[2]);
+    assert_ne!(parts(&ticket_of(&other))[4], p[4]);
 }
 
 #[tokio::test]
@@ -159,7 +159,7 @@ async fn accounts_mode_tickets_end_with_the_user_session() {
     let res = device2.post("/api/auth/login", json!({"username": "alice_t", "password": "a long password"})).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     let ticket2 = ticket_of(&device2.post("/api/wisp/ticket", json!({})).await.json());
-    assert_ne!(parts(&ticket)[2], parts(&ticket2)[2], "one ref per user session");
+    assert_ne!(parts(&ticket)[4], parts(&ticket2)[4], "one ref per user session");
 
     // Signing out on the first device ends its tickets (nothing was cached for it yet); the other device's
     // ticket is still accepted (and then fails at the closed upstream).
@@ -183,4 +183,56 @@ async fn upgrades_are_rate_limited_per_ip() {
     assert_eq!((res.status, res.error_code().as_str()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
     let other = send_to(&app.public, upgrade("w1.1.x.y"), "198.51.100.41:5000".parse().unwrap()).await;
     assert_eq!(other.status, StatusCode::UNAUTHORIZED, "other addresses are unaffected");
+}
+
+/// D23: a mint without a body (the step-2 clients) still gives a default-route ticket; `{}` and
+/// `{"route": "default"}` do too; a profile route needs a known location; malformed routes are 422 on `route`.
+#[tokio::test]
+async fn the_ticket_route_comes_from_the_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let profiles = dir.path().join("profiles.toml");
+    std::fs::write(
+        &profiles,
+        "[[profile]]\nid = \"se-got\"\nlabel = \"Sweden\"\ncountry_code = \"se\"\ncountry = \"Sweden\"\ncity = \
+         \"Gothenburg\"\nwisp_upstream = \"127.0.0.1:9\"\n",
+    )
+    .unwrap();
+    let path = profiles.display().to_string();
+    let app = TestApp::new(&[("GNOME_VPN_PROFILES", &path)]).await;
+    let no_body = Request::builder()
+        .method("POST")
+        .uri("/api/wisp/ticket")
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, ORIGIN)
+        .header("x-gnome-request", "1")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.send(no_body).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(parts(&ticket_of(&res.json()))[3], "d");
+    let mut c = app.client();
+    for body in [json!({}), json!({"route": "default"}), json!({"route": null})] {
+        let res = c.post("/api/wisp/ticket", body.clone()).await;
+        assert_eq!(res.status, StatusCode::OK, "{body}: {}", res.text());
+        assert_eq!(parts(&ticket_of(&res.json()))[3], "d", "{body}");
+    }
+    let res = c.post("/api/wisp/ticket", json!({"route": {"profile": "se-got"}})).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let v = res.json();
+    // `p` + base64url("se-got"); the URL the app connects to stays its own choice.
+    assert_eq!(parts(&ticket_of(&v))[3], "pc2UtZ290");
+    for (body, msg) in [
+        (json!({"route": {"profile": "nope"}}), "unknown VPN location"),
+        (json!({"route": {"profile": "direct"}}), "unknown VPN location"),
+        (json!({"route": "profile"}), "must be"),
+        (json!({"route": 5}), "must be"),
+        (json!({"route": {"profile": "se-got", "x": 1}}), "must be"),
+        (json!({"route": {"profile": 1}}), "must be"),
+    ] {
+        let res = c.post("/api/wisp/ticket", body.clone()).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{body}: {}", res.text());
+        let e = res.json();
+        assert_eq!(e["error"]["code"], "validation_failed", "{body}");
+        assert!(e["error"]["fields"]["route"].as_str().unwrap().contains(msg), "{body}: {e}");
+    }
 }

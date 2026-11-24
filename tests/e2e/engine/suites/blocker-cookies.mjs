@@ -172,8 +172,12 @@ export async function run(ctx) {
     const frameRound = async (engine, opts, tag) => {
       await fresh();
       await applyBlocker(app, opts);
-      await visit(`${T}/set-cookie?${tag}seed=1`, engine);
-      const a = await withFrame(engine, `${T}/set-cookie?${tag}frame=1`, '/set-cookie', 'trk');
+      // SameSite=None; Secure: a cookie without SameSite is Lax by default, which a browser (Chromium) never sends to a
+      // cross-site frame, and Ultraviolet follows that since the SameSite glue (K13); these rows are about the cookie
+      // manager letting third-party cookies through, so they use cookies a browser sends to a third-party frame.
+      const none = enc('; SameSite=None; Secure');
+      await visit(`${T}/set-cookie?${tag}seed=1${none}`, engine);
+      const a = await withFrame(engine, `${T}/set-cookie?${tag}frame=1${none}`, '/set-cookie', 'trk');
       await shut(a.id);
       const b = await withFrame(engine, `${T}/cookies?format=html&via=${tag}`, '/cookies', 'trk');
       const sent = await cookieSeen(b.since, 'trk', tag);

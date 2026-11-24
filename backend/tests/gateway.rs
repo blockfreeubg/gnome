@@ -13,7 +13,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use common::*;
 use futures_util::{SinkExt as _, StreamExt as _};
-use gnome_server::gateway::ticket::{SessionRef, TicketKey};
+use gnome_server::gateway::ticket::{SessionRef, TicketKey, TicketRoute};
 use gnome_server::gateway::upstream::accept_key;
 use gnome_server::gateway::{Gateway, GatewayOptions};
 use gnome_server::module::builtin_modules_with;
@@ -169,7 +169,12 @@ impl Running {
 
     /// A ticket for `client`'s session (`POST /api/wisp/ticket` on the app origin).
     async fn ticket(&self, client: &mut Client<'_>) -> String {
-        let res = client.post("/api/wisp/ticket", json!({})).await;
+        self.ticket_for(client, json!({})).await
+    }
+
+    /// A ticket for `client`'s session and the route in `body` (D23).
+    async fn ticket_for(&self, client: &mut Client<'_>, body: Value) -> String {
+        let res = client.post("/api/wisp/ticket", body).await;
         assert_eq!(res.status, StatusCode::OK, "{}", res.text());
         let v = res.json();
         assert_eq!(v["wisp_url"], format!("ws://{}/wisp/", self.proxy));
@@ -460,7 +465,7 @@ async fn refusals_are_json_and_happen_before_the_upgrade() {
     assert!(err.1["error"]["message"].as_str().unwrap().contains("expired"), "{:?}", err.1);
     let foreign =
         TicketKey::new(&SecretKey::from_bytes(vec![9; 32]).unwrap(), gnome_server::config::AccessMode::Open, None)
-            .mint(sref, gnome_server::util::now_s() + 600);
+            .mint(sref, &TicketRoute::Default, gnome_server::util::now_s(), gnome_server::util::now_s() + 600);
     assert_eq!(code(&attempt(format!("/wisp/?t={foreign}"), ok_origin.clone()).await), (401, "wisp_ticket_invalid"));
     // Unknown profile; `direct` is not a profile path.
     assert_eq!(code(&attempt(format!("/wisp/p/nope/?t={ticket}"), ok_origin.clone()).await), (404, "not_found"));
@@ -539,12 +544,12 @@ async fn connection_caps_are_enforced_and_released() {
     let mut alice = run.app.client();
     let mut bob = run.app.client();
     let (ta, tb) = (run.ticket(&mut alice).await, run.ticket(&mut bob).await);
-    assert_ne!(ta.split('.').nth(2), tb.split('.').nth(2), "two sessions, two refs");
+    assert_ne!(ta.split('.').nth(4), tb.split('.').nth(4), "two sessions, two refs");
     let a1 = run.open(&ta).await.unwrap();
     let a2 = run.open(&ta).await.unwrap();
     // A fresh ticket of the same session shares its cap.
     let ta2 = run.ticket(&mut alice).await;
-    assert_eq!(ta2.split('.').nth(2), ta.split('.').nth(2));
+    assert_eq!(ta2.split('.').nth(4), ta.split('.').nth(4));
     let err = run.open(&ta2).await.map(|_| ()).unwrap_err();
     assert_eq!(code(&err), (429, "too_many_connections"));
     assert!(err.1["error"]["message"].as_str().unwrap().contains("session"));
@@ -646,7 +651,9 @@ async fn health_probes_and_vpn_profiles() {
     );
     assert!(p[0]["checked_at"].as_i64().unwrap() > 0);
     assert_eq!(p[1]["status"], "down");
-    assert!(loc["verify_url"].as_str().unwrap().starts_with("https://"));
+    // WAVE-C D15: no exit-check service unless the operator sets GNOME_VPN_CHECK_URL.
+    assert!(loc["verify_url"].is_null() && loc["check_service"].is_null(), "{loc}");
+    assert_eq!(p[0]["exit"]["state"], "off");
     let cfg = run.app.send(get("/api/config")).await.json();
     assert_eq!(cfg["features"]["vpn_gateway"], true);
     assert_eq!(cfg["wisp"]["profiles"][0]["path"], "/wisp/p/se-got/");
@@ -661,7 +668,7 @@ async fn health_probes_and_vpn_profiles() {
 
     // A profile path reaches that profile's upstream only.
     let mut client = run.app.client();
-    let ticket = run.ticket(&mut client).await;
+    let ticket = run.ticket_for(&mut client, json!({"route": {"profile": "se-got"}})).await;
     let origin = run.origin();
     let (mut ws, _) =
         connect(run.proxy, &format!("/wisp/p/se-got/?t={ticket}"), &[("Origin", &origin)], None).await.unwrap();
@@ -675,7 +682,14 @@ async fn health_probes_and_vpn_profiles() {
     assert_eq!(swedish.len(), 1, "the relayed connection");
     assert!(swedish[0].starts_with("GET /wisp/p/se-got/ HTTP/1.1\r\n"), "{}", swedish[0]);
     assert!(direct.heads().is_empty(), "nothing relayed to direct");
+    // A ticket of one location is refused on another one's path (D23).
     let err = connect(run.proxy, &format!("/wisp/p/ch-zrh/?t={ticket}"), &[("Origin", &origin)], None)
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(code(&err), (401, "wisp_ticket_wrong_route"));
+    let zrh = run.ticket_for(&mut client, json!({"route": {"profile": "ch-zrh"}})).await;
+    let err = connect(run.proxy, &format!("/wisp/p/ch-zrh/?t={zrh}"), &[("Origin", &origin)], None)
         .await
         .map(|_| ())
         .unwrap_err();
@@ -801,7 +815,7 @@ async fn ticket_url_forms_and_probes_over_real_sockets() {
     );
     let heads = upstream.heads();
     assert_eq!(heads.len(), 3);
-    let (mac, sref) = (ticket.rsplit('.').next().unwrap(), ticket.split('.').nth(2).unwrap());
+    let (mac, sref) = (ticket.rsplit('.').next().unwrap(), ticket.split('.').nth(4).unwrap());
     for h in &heads {
         assert!(h.starts_with("GET /wisp/ HTTP/1.1\r\n"), "{h}");
         assert!(!h.contains(mac) && !h.contains(sref) && !h.contains("t="), "{h}");
@@ -827,6 +841,95 @@ async fn ticket_url_forms_and_probes_over_real_sockets() {
     assert_eq!(d["ws"]["probes"], json!({"valid": 5, "rejected": 1, "upstream_down": 0}));
     held.close(None).await.unwrap();
     drop(held);
+    run.wait_idle().await;
+    run.stop().await;
+}
+
+/// D23: tickets are bound to their route. A ticket works only on its own path; tickets minted before the server
+/// started are stale; once a session minted a profile-route ticket, its older default-route tickets are refused and
+/// their open connections close at the next session re-check (shortened here; 15 s in production), while a
+/// default-route ticket minted later (the app's real fallback) works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tickets_are_bound_to_their_route() {
+    let direct = Upstream::start().await;
+    let sweden = Upstream::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let profiles = dir.path().join("profiles.toml");
+    std::fs::write(
+        &profiles,
+        format!(
+            "[[profile]]\nid = \"se-got\"\nlabel = \"Sweden\"\ncountry_code = \"se\"\ncountry = \"Sweden\"\ncity = \
+             \"Gothenburg\"\nwisp_upstream = \"{}\"\n",
+            sweden.addr
+        ),
+    )
+    .unwrap();
+    let path = profiles.display().to_string();
+    let check = Duration::from_millis(200);
+    let options = GatewayOptions { session_check: check, ..GatewayOptions::default() };
+    let run = Running::start_with(&[("GNOME_VPN_PROFILES", &path)], direct.addr, options).await;
+    let origin = run.origin();
+    let o = [("Origin", origin.as_str())];
+    let mut client = run.app.client();
+
+    let td = run.ticket(&mut client).await;
+    let mut on_direct = run.open(&td).await.unwrap();
+    assert_eq!(next_binary(&mut on_direct).await, GREETING);
+    let wrong = connect(run.proxy, &format!("/wisp/p/se-got/?t={td}"), &o, None).await.map(|_| ()).unwrap_err();
+    assert_eq!(code(&wrong), (401, "wisp_ticket_wrong_route"));
+    // The probe answers the same.
+    assert_eq!(plain_get(run.proxy, &format!("/wisp/p/se-got/?t={td}&/")).await.0, 401);
+
+    // Mint times are whole seconds: the profile mint must be strictly later than the default one.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let tp = run.ticket_for(&mut client, json!({"route": {"profile": "se-got"}})).await;
+    let wrong = connect(run.proxy, &format!("/wisp/?t={tp}"), &o, None).await.map(|_| ()).unwrap_err();
+    assert_eq!(code(&wrong), (401, "wisp_ticket_wrong_route"));
+    let (mut on_vpn, _) = connect(run.proxy, &format!("/wisp/p/se-got/?t={tp}"), &o, None).await.unwrap();
+    assert_eq!(next_binary(&mut on_vpn).await, GREETING);
+
+    // The open direct connection ends at the next re-check; the old ticket is refused from now on.
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match on_direct.next().await {
+                Some(Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))) => {}
+                _ => return,
+            }
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "the superseded direct-route connection was closed");
+    assert_eq!(code(&run.open(&td).await.map(|_| ()).unwrap_err()), (401, "wisp_ticket_superseded"));
+    // The profile connection is unaffected.
+    on_vpn.send(Message::binary(b"via sweden".to_vec())).await.unwrap();
+    assert_eq!(next_binary(&mut on_vpn).await, b"via sweden");
+    // Another session's direct tickets are not affected by this session's mint.
+    let mut other = run.app.client();
+    let t_other = run.ticket(&mut other).await;
+    let mut ws_other = run.open(&t_other).await.unwrap();
+    assert_eq!(next_binary(&mut ws_other).await, GREETING);
+    // A direct-route ticket minted after the profile one works (the app's fallback with the kill switch off).
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let td2 = run.ticket(&mut client).await;
+    let mut on_direct2 = run.open(&td2).await.unwrap();
+    assert_eq!(next_binary(&mut on_direct2).await, GREETING);
+
+    // A ticket minted before this process started (an earlier run with the same secret) is stale.
+    let key = TicketKey::new(&run.app.state.secret, gnome_server::config::AccessMode::Open, None);
+    let now = gnome_server::util::now_s();
+    let old = key.mint(SessionRef([7; 16]), &TicketRoute::Default, now - 3600, now + 600);
+    assert_eq!(code(&run.open(&old).await.map(|_| ()).unwrap_err()), (401, "wisp_ticket_stale"));
+    let old_vpn = key.mint(SessionRef([7; 16]), &TicketRoute::Profile("se-got".into()), now - 3600, now + 600);
+    let err = connect(run.proxy, &format!("/wisp/p/se-got/?t={old_vpn}"), &o, None).await.map(|_| ()).unwrap_err();
+    assert_eq!(code(&err), (401, "wisp_ticket_stale"));
+    // A w1 ticket (before D23) is refused as invalid.
+    let w1 = format!("w1.{}.{}.{}", now + 600, SessionRef([7; 16]).to_b64(), "A".repeat(43));
+    assert_eq!(code(&run.open(&w1).await.map(|_| ()).unwrap_err()), (401, "wisp_ticket_invalid"));
+
+    for ws in [&mut on_vpn, &mut ws_other, &mut on_direct2] {
+        ws.close(None).await.unwrap();
+    }
+    drop((on_direct, on_vpn, ws_other, on_direct2));
     run.wait_idle().await;
     run.stop().await;
 }

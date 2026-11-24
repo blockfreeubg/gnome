@@ -28,6 +28,7 @@
   import { browser, engineLabel, otherEngine } from '../browser.svelte';
   import type { Tab, TabError } from '../tabs.svelte';
   import { blockedCategory, errorCopy, type ErrorGlyph } from './error-copy';
+  import { vpnState } from '../../vpn/state.svelte';
 
   let { tab, error }: { tab: Tab; error: TabError } = $props();
 
@@ -39,7 +40,9 @@
 
   const GLYPHS: Record<ErrorGlyph, LucideIcon> = { unplug: Unplug, timer: Timer, server: ServerCrash, offline: CloudOff, blocked: ShieldBan };
   const copy = $derived.by(() => {
-    const c = errorCopy(error, { host, vpn, killSwitch, engine: engineLabel(error.engine) });
+    // The server's last exit check of this location failed (a warning, D14): one more line, never a verdict.
+    const exitFails = vpn !== null && vpn.id !== '' && vpnState().exitWarning(vpn.id) !== null;
+    const c = errorCopy(error, { host, vpn, killSwitch, engine: engineLabel(error.engine), exitFails });
     return { ...c, icon: GLYPHS[c.glyph] };
   });
 
@@ -107,6 +110,9 @@
       {#if !error.idempotent}
         <p class="warn">This page was the answer to a form. Retrying loads the address again without sending the form.</p>
       {/if}
+      {#if copy.exitLine}
+        <p class="body">{copy.exitLine}</p>
+      {/if}
       {#if error.detail}
         <p class="detail mono" title="What the transport reported">{error.detail}</p>
       {/if}
@@ -114,6 +120,9 @@
         <Button variant="primary" icon={RotateCw} onclick={() => browser.retry(tab.id)}>Retry</Button>
         {#if otherReady}
           <Button onclick={() => browser.retry(tab.id, other)}>Open with {engineLabel(other)}</Button>
+        {/if}
+        {#if copy.vpnLink}
+          <Button onclick={() => void navigate('/vpn')}>Open VPN page</Button>
         {/if}
       </div>
     {/if}

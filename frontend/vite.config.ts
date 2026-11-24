@@ -19,26 +19,12 @@ export function buildId(): string {
   return id;
 }
 
-/**
- * Capabilities an e2e build offers before production does (WAVE-B3 D19): `GNOME_ENGINE_TEST_CAPABILITIES`, a comma
- * list, only together with `GNOME_ENGINE_TEST=1`; every other build gets []. The engine host adds them to what it
- * offers (InitResult.capabilities, diagnostics) and the app registers the features they gate. The integration step
- * removes the switch once the capability is offered for real.
- */
-export function engineTestCapabilities(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (env.GNOME_ENGINE_TEST !== '1') return [];
-  const caps = (env.GNOME_ENGINE_TEST_CAPABILITIES ?? '').split(',').map((c) => c.trim()).filter(Boolean);
-  for (const c of caps) if (!/^[a-zA-Z]{1,32}$/.test(c)) throw new Error(`GNOME_ENGINE_TEST_CAPABILITIES: invalid capability ${JSON.stringify(c)}`);
-  return [...new Set(caps)];
-}
-
 /** Compile-time constants shared by every bundle (vite-env.d.ts). `__GNOME_ENGINE_TEST__` only for e2e builds. */
 export function gnomeDefines(id: string = buildId()): Record<string, string> {
   return {
     __GNOME_VERSION__: JSON.stringify(pkg.version),
     __GNOME_BUILD__: JSON.stringify(id),
     __GNOME_ENGINE_TEST__: JSON.stringify(process.env.GNOME_ENGINE_TEST === '1'),
-    __GNOME_ENGINE_TEST_CAPABILITIES__: JSON.stringify(engineTestCapabilities()),
   };
 }
 

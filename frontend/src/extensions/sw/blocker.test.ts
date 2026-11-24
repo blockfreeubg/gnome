@@ -229,6 +229,48 @@ describe('startSwBlocker', () => {
     expect(never).toEqual({ documentUrl: null, topLevelUrl: null, isTopLevelDocument: false, documentProxied: null });
   });
 
+  it('initiators (lane x3 SameSite glue): announced inits are one-shot, else the referrer’s recorded document; hops keep them; engine-host fetches get the page', async () => {
+    const s = setup();
+    s.b.onConfig('h1', s.settings(), null);
+    const pageB = prox('http://site-b.localhost/p');
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [[pageB, 'http://site-b.localhost/p']], navs: [], drop: [], reset: false });
+    const own = prox('http://site-a.localhost/');
+    const opened = prox('http://site-a.localhost/opened');
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [], navs: [own], drop: [], inits: [[own, ''], [opened, 'http://site-b.localhost/p']], reset: false });
+    // GNOME's own load: '' once; then nothing is announced and there is no referrer
+    expect(s.b.initiatorOf(own, null)).toBe('');
+    expect(s.b.initiatorOf(own, null)).toBeNull();
+    expect(s.b.initiatorOf(`${opened}#x`, null)).toBe('http://site-b.localhost/p');
+    // a page's link: the referrer's recorded document; an unrecorded referrer is unknown
+    expect(s.b.initiatorOf(prox('http://site-a.localhost/l'), pageB)).toBe('http://site-b.localhost/p');
+    expect(s.b.initiatorOf(prox('http://site-a.localhost/l'), prox('http://bank.localhost/'))).toBeNull();
+    // inits expire after 30 s and are dropped with a cancelled navigation
+    const late = prox('http://site-a.localhost/late');
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [], navs: [late], drop: [], inits: [[late, '']], reset: false });
+    await s.advance(30_001);
+    expect(s.b.initiatorOf(late, null)).toBeNull();
+    const cancelled = prox('http://site-a.localhost/c');
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [], navs: [cancelled], drop: [], inits: [[cancelled, '']], reset: false });
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [], navs: [], drop: [cancelled], reset: false });
+    expect(s.b.initiatorOf(cancelled, null)).toBeNull();
+    // a redirect hop of GNOME's own load keeps the initiator-less start
+    const first = prox('http://site-a.localhost/r');
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [], navs: [first], drop: [], inits: [[first, '']], reset: false });
+    s.b.onConfig('h1', s.settings(), null);
+    const c1 = await s.b.context({ clientId: '' }, { url: first, mode: 'navigate', destination: 'iframe', referrer: '' });
+    const init = s.b.initiatorOf(first, null);
+    const hop = prox('http://site-a.localhost/r2');
+    s.b.redirected(c1, hop, init);
+    expect(s.b.initiatorOf(hop, null)).toBe('');
+    // the engine host's own fetch for a page (favicon): that page's context, once
+    const icon = prox('http://site-a.localhost/favicon.ico');
+    s.b.onContext('h1', { type: 'gnome-blocker-context', docs: [], navs: [], drop: [], inits: [[icon, 'http://site-b.localhost/p']], reset: false });
+    expect(await s.b.context({ clientId: 'h1' }, sub(icon))).toEqual({ documentUrl: 'http://site-b.localhost/p', topLevelUrl: 'http://site-b.localhost/p', isTopLevelDocument: false, documentProxied: pageB });
+    const again = s.b.context({ clientId: 'h1' }, sub(icon));
+    await s.advance(50);
+    expect(await again).toMatchObject({ documentUrl: null, topLevelUrl: null });
+  });
+
   it('a link of a tab-top document waits ≤ 20 ms for its announcement', async () => {
     const s = setup();
     s.b.onConfig('h1', s.settings(), null);

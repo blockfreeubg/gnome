@@ -1,0 +1,19 @@
+# The e2e suites' OSS manifest (docs/WAVE-C.md §9.1): one `local` entry, GNOME's own test game in
+# tests/e2e/engine/fixtures/games/oss/e2e-blocks/ (copied into the suite's GNOME_OSS_GAMES_DIR). Test data only: never
+# a product manifest. It keeps its best score in localStorage, so it is not `isolated`.
+
+[[games]]
+slug = "e2e-blocks"
+title = "E2E Blocks"
+license = "AGPL-3.0-only"
+license_file = "LICENSE"
+copyright = "Copyright (C) 2026 The GNOME project contributors"
+author = "GNOME e2e tests"
+entry = "index.html"
+build = "static"
+thumbnail = "icon.svg"
+categories = ["arcade"]
+tags = ["blocks", "e2e"]
+description = "Catch the falling blocks with the paddle. GNOME's own test game."
+enabled = true
+local = true

@@ -11,8 +11,7 @@
 // Suites that need their own server layout (`export const standalone = true`) run once per run as a child process on
 // their own port block. Filter lists (WAVE-B3 §12.1, lib/blocker.mjs): by default the server offers only the test
 // lists of fixtures/blocker/lists/*.txt, the generated big list and `ubo-resources` (upstream; with --offline the
-// pinned copy); --blocker-real keeps the built-in registry instead (needs the internet, §12.3). The build carries
-// GNOME_ENGINE_TEST_CAPABILITIES=blocker (D19) unless the environment sets that variable (empty: without it).
+// pinned copy); --blocker-real keeps the built-in registry instead (needs the internet, §12.3).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

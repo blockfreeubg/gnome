@@ -45,7 +45,7 @@ export const SECTIONS: readonly SectionMeta[] = [
     core: 'Visual effects and preloading GNOME’s pages.',
   },
   { id: 'vpn', label: 'VPN', description: 'Route pages opened in GNOME through a VPN gateway.' },
-  { id: 'games', label: 'Games', description: 'Catalog layout, sorting, recently played and categories.' },
+  { id: 'games', label: 'Games', description: 'Catalog layout, sorting, recently played and categories. Playing a game tells the game network and its advertisers your IP address.' },
   { id: 'extensions', label: 'Extensions', description: 'Ad and tracker blocking, filter lists and site rules.' },
   {
     id: 'shortcuts',
@@ -166,11 +166,11 @@ export const ROWS: readonly RowMeta[] = [
     { id: 'cacheLimitMB', needs: 'extensions', label: 'Filter data cache limit', description: 'Maximum space for the filter-list data GNOME’s blockers cache in this browser.', keywords: 'cache storage disk size filter lists', paths: ['performance.cacheLimitMB'] },
   ]),
   ...rows('vpn', [
-    { id: 'mode', label: 'VPN gateway', description: 'Route pages opened in GNOME through a VPN gateway run by this server.', keywords: 'vpn mullvad wireguard tunnel gateway', paths: ['vpn.mode'] },
-    { id: 'preferredLocation', label: 'Location', description: 'The gateway pages are routed through.', keywords: 'country city server location exit', paths: ['vpn.preferredLocation'] },
-    { id: 'autoConnect', label: 'Connect automatically', description: 'Use the gateway as soon as GNOME opens.', keywords: 'auto connect start', paths: ['vpn.autoConnect'] },
-    { id: 'killSwitch', label: 'Block if the gateway is down', description: 'Stop loading pages instead of falling back to the server’s own connection.', keywords: 'kill switch leak protection', paths: ['vpn.killSwitch'] },
-    { id: 'verifyExit', label: 'Verify the exit address', description: 'Check from this browser, through the gateway, which IP address sites see.', keywords: 'ip check exit verify', paths: ['vpn.verifyExit'] },
+    { id: 'mode', label: 'VPN', description: 'Route pages opened in GNOME through a location this server’s operator runs. Kept in this browser only.', keywords: 'vpn wireguard tunnel gateway location', paths: ['vpn.mode'] },
+    { id: 'preferredLocation', label: 'Location', description: 'The location pages are routed through.', keywords: 'country city server location exit', paths: ['vpn.preferredLocation'] },
+    { id: 'autoConnect', label: 'Connect automatically', description: 'Turn the VPN on each time GNOME opens in a new browser tab, also after you disconnected.', keywords: 'auto connect start', paths: ['vpn.autoConnect'] },
+    { id: 'killSwitch', label: 'Block if the location is down', description: 'Stop loading pages while the location is down, instead of using this server’s own connection. Kept in this browser only.', keywords: 'kill switch leak protection', paths: ['vpn.killSwitch'] },
+    { id: 'verifyExit', label: 'Check this browser’s exit', description: 'Ask the check service, through this browser’s route, which address sites see. Its answer is not proof, and the check service sees this server’s VPN address each time.', keywords: 'ip check exit verify', paths: ['vpn.verifyExit'] },
   ], 'vpn'),
   ...rows('games', [
     { id: 'view', label: 'Catalog view', keywords: 'grid list layout', paths: ['games.view'] },

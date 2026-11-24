@@ -345,6 +345,14 @@ describe('requestWispTicket', () => {
     });
     expect(calls[0]!.url).toBe('/api/wisp/ticket');
     expect((calls[0]!.init.headers as Record<string, string>)['X-GNOME-Request']).toBe('1');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ route: 'default' });
+  });
+
+  it('sends the route the ticket is bound to (WAVE-C D23)', async () => {
+    mockFetch(() => json(200, ticket));
+    await requestWispTicket({ route: { profile: 'e2e.vpn' } });
+    await requestWispTicket({ route: 'default' });
+    expect(calls.map((c) => JSON.parse(String(c.init.body)))).toEqual([{ route: { profile: 'e2e.vpn' } }, { route: 'default' }]);
   });
 
   it('creates a session (with the access code) and retries once when the server needs one', async () => {

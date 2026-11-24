@@ -185,7 +185,7 @@ async fn slug_collisions_stay_unique_valid_and_reachable() {
     assert_eq!(slugs.iter().collect::<HashSet<_>>().len(), 60);
     for s in &slugs {
         assert!(gnome_catalog::slug::is_valid_slug(s), "{s}");
-        assert!(cat.game(&conn, s, 0).unwrap().is_some(), "game {s} is unreachable");
+        assert!(cat.game(&conn, s, 0, &Default::default()).unwrap().is_some(), "game {s} is unreachable");
     }
 }
 
@@ -379,12 +379,12 @@ async fn response_shapes_match_api_md() {
     assert_eq!(keys(&page), sorted(&["items", "next_cursor", "total"]));
     assert!(page["next_cursor"].is_string() && page["total"] == 12);
     page["items"].as_array().unwrap().iter().for_each(check_summary);
-    let sections = serde_json::to_value(cat.sections(&conn, 24).unwrap()).unwrap();
+    let sections = serde_json::to_value(cat.sections(&conn, 24, &Default::default()).unwrap()).unwrap();
     assert_eq!(keys(&sections), sorted(&["featured", "trending", "popular", "new"]));
     let cats = serde_json::to_value(cat.categories(&conn, false).unwrap()).unwrap();
     assert!(cats.as_array().unwrap().iter().all(|c| keys(c) == sorted(&["slug", "name", "count"])));
     let slug = page["items"][0]["slug"].as_str().unwrap().to_owned();
-    let detail = serde_json::to_value(cat.game(&conn, &slug, 4).unwrap().unwrap()).unwrap();
+    let detail = serde_json::to_value(cat.game(&conn, &slug, 4, &Default::default()).unwrap().unwrap()).unwrap();
     assert_eq!(keys(&detail), sorted(&["game", "related"]));
     let detail_keys = [
         "description",

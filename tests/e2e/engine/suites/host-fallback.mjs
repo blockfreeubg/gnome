@@ -146,6 +146,24 @@ async function hookRows(ctx, fx, context) {
       const sw = (await app.eventsSince(s)).filter((e) => e.type === 'tab.engineSwitched');
       ctx.record({ test: 'fallback:404 is not a failure', result: r.ok && r.engine === 'scramjet' && sw.length === 0 ? 'pass' : 'fail', notes: `ok ${r.ok} engine ${r.engine} title ${JSON.stringify(r.title)} switches ${sw.length}` });
     }
+    // The Ultraviolet retry of a tab a page asked for keeps that page as its initiator (SameSite and fetch metadata,
+    // WAVE-B3 lane x3's glue): a cross-site navigation, not GNOME's own load (which sends Sec-Fetch-Site: none and
+    // the victim's Strict cookie).
+    {
+      fx.xs.reset();
+      await app.navigate(tab, `${fx.origin}/xs/set`, { timeout: 45000 });
+      const opened = 7;
+      const s = await app.mark();
+      await app.createTab(opened, { engine: null, active: false, start: { kind: 'url', url: `${fx.origin}/xs/echo?via=fbopen&gnome-fault=sj-throw`, opener: `${fx.altOrigin}/xs/attacker` } });
+      const sw = await app.waitFor(s, (e) => e.type === 'tab.engineSwitched' && e.p.tabId === opened, 30000);
+      // the retry's document arrived (Ultraviolet): its request is the last one the site logged
+      const loaded = sw ? await app.waitFor(s, (e) => e.type === 'tab.loaded' && e.p.tabId === opened, 30000) : null;
+      const uv = loaded ? (fx.xs.log().filter((e) => e.via === 'fbopen').pop() ?? null) : null;
+      const cookie = (e, name) => !!e && e.cookie.split(/;\s*/).some((c) => c.startsWith(`${name}=`));
+      const ok = !!sw && sw.p.reason === 'error-hook' && !!uv && uv.site === 'cross-site' && !cookie(uv, 'xs_strict') && uv.referer === `${fx.altOrigin}/`;
+      await app.cmd('tab.close', { tabId: opened }).catch(() => {});
+      ctx.record({ test: 'fallback:the Ultraviolet retry of a tab a page opened keeps the opener as initiator', result: ok ? 'pass' : 'fail', notes: `switched ${JSON.stringify(sw?.p ?? null)}; UV request ${JSON.stringify(uv)}` });
+    }
     // Timeout on both engines.
     {
       await app.cmd('tab.navigate', { tabId: tab, url: `${fx.origin}/second`, engine: null, permissions: PERMS });

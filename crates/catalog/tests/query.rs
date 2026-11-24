@@ -236,7 +236,7 @@ async fn category_filter_sorted_by_popularity() {
 async fn sections_categories_and_tags() {
     let (cat, db, _clock) = setup().await;
     let conn = db.lock().unwrap();
-    let s = cat.sections(&conn, 24).unwrap();
+    let s = cat.sections(&conn, 24, &Default::default()).unwrap();
     assert_eq!((s.featured.len(), s.trending.len(), s.popular.len()), (24, 24, 24));
     assert!(!s.new.is_empty() && s.new.len() <= 24);
     // No admin picks yet: featured is topped up by source quality (GamePix quality_score).
@@ -293,7 +293,7 @@ async fn by_ids_detail_and_related() {
             |r| r.get(0),
         )
         .unwrap();
-    let page = cat.game(&conn, &slug, 6).unwrap().unwrap();
+    let page = cat.game(&conn, &slug, 6, &Default::default()).unwrap().unwrap();
     let g = &page.game;
     assert!(
         g.embed_url.starts_with("https://play.gamepix.com/") && g.embed_url.ends_with("/embed?sid=1"),
@@ -312,10 +312,10 @@ async fn by_ids_detail_and_related() {
         .query_row("SELECT slug FROM games WHERE source_id = '569b64ffae3b4021ac9dda1fd78cd4e0'", [], |r| r.get(0))
         .unwrap();
     assert_eq!(slug, "flower-sort-adventure");
-    let gd = cat.game(&conn, &slug, 0).unwrap().unwrap().game;
+    let gd = cat.game(&conn, &slug, 0, &Default::default()).unwrap().unwrap().game;
     assert_eq!(
         gd.embed_url,
-        "https://html5.gamedistribution.com/569b64ffae3b4021ac9dda1fd78cd4e0/?gd_sdk_referrer_url=https%3A%2F%2Fgnome.example.com%2Fgames%2Fflower-sort-adventure"
+        "https://html5.gamedistribution.com/569b64ffae3b4021ac9dda1fd78cd4e0/?gd_sdk_referrer_url=https%3A%2F%2Fgnome.example.com%2Fplay%2Fflower-sort-adventure"
     );
     assert_eq!(gd.flags, ["kids_friendly", "no_blood"]);
     assert_eq!(gd.tags, ["flowers", "sorting", "match3"]);
@@ -347,8 +347,8 @@ async fn by_ids_detail_and_related() {
         assert!(json.get(key).is_some(), "GameDetail.{key}");
     }
     assert_eq!(json["source"], "gamedistribution");
-    assert!(cat.game(&conn, "no-such-game", 3).unwrap().is_none());
-    assert!(cat.game(&conn, "../etc", 3).unwrap().is_none());
+    assert!(cat.game(&conn, "no-such-game", 3, &Default::default()).unwrap().is_none());
+    assert!(cat.game(&conn, "../etc", 3, &Default::default()).unwrap().is_none());
 }
 
 #[tokio::test]
@@ -395,20 +395,20 @@ async fn admin_feature_and_status_overrides() {
     let all = cat.list(&conn, &ListQuery { limit: Some(100), ..ListQuery::default() }).unwrap();
     let pick = all.items[40].clone();
     cat.set_featured(&mut conn, pick.id, true, clock.now_ms()).unwrap();
-    assert_eq!(cat.sections(&conn, 24).unwrap().featured[0].id, pick.id);
+    assert_eq!(cat.sections(&conn, 24, &Default::default()).unwrap().featured[0].id, pick.id);
     let f = cat.list(&conn, &ListQuery { sort: Some(Sort::Featured), limit: Some(1), ..ListQuery::default() }).unwrap();
     assert_eq!(f.items[0].id, pick.id);
     cat.set_featured(&mut conn, pick.id, false, clock.now_ms()).unwrap();
-    assert_ne!(cat.sections(&conn, 24).unwrap().featured[0].id, pick.id);
+    assert_ne!(cat.sections(&conn, 24, &Default::default()).unwrap().featured[0].id, pick.id);
     assert!(matches!(cat.set_featured(&mut conn, 999_999, true, 0), Err(CatalogError::NotFound)));
 
     cat.set_status(&mut conn, pick.id, Some(AdminStatus::Broken)).unwrap();
     let after = cat.list(&conn, &ListQuery { limit: Some(100), ..ListQuery::default() }).unwrap();
     assert_eq!(after.total, all.total - 1);
-    assert!(cat.game(&conn, &pick.slug, 0).unwrap().is_none());
+    assert!(cat.game(&conn, &pick.slug, 0, &Default::default()).unwrap().is_none());
     assert!(cat.by_ids(&conn, &[pick.id]).unwrap().is_empty());
     cat.set_status(&mut conn, pick.id, None).unwrap();
-    assert!(cat.game(&conn, &pick.slug, 0).unwrap().is_some());
+    assert!(cat.game(&conn, &pick.slug, 0, &Default::default()).unwrap().is_some());
     let stats = cat.stats(&conn).unwrap();
     assert_eq!(stats.by_source["gamepix"].active, 58);
 }
@@ -431,6 +431,97 @@ async fn stats_thumbnails_and_embed_hosts() {
     assert_eq!(cat.thumbnail_source(&conn, 999_999).unwrap(), None);
     assert_eq!(cat.thumb_policy().hosts(), ["img.gamedistribution.com", "img.gamepix.com"]);
     assert_eq!(cat.embed_hosts(&conn).unwrap(), ["html5.gamedistribution.com", "play.gamepix.com"]);
+    let counts = cat.embed_host_counts(&conn).unwrap();
+    assert_eq!(counts, [("html5.gamedistribution.com".to_string(), 10), ("play.gamepix.com".to_string(), 58)]);
+}
+
+/// WAVE-C D11: exclusions in any category position, their totals, unknown slugs ignored, cursors bound to them.
+#[tokio::test]
+async fn exclusions_and_their_cursors() {
+    use gnome_catalog::ListFilter;
+    let (cat, db, _clock) = setup().await;
+    let conn = db.lock().unwrap();
+    let cats_of = |id: i64| -> Vec<String> {
+        conn.prepare("SELECT category FROM game_categories WHERE game_id = ?1")
+            .unwrap()
+            .query_map([id], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let all = page_all(&cat, &conn, &ListQuery::default(), 7);
+    let strategy: Vec<i64> = all.iter().copied().filter(|id| cats_of(*id).iter().any(|c| c == "strategy")).collect();
+    assert!(!strategy.is_empty() && strategy.len() < all.len());
+    // A game whose excluded category is not its primary one is left out too.
+    assert!(strategy.iter().any(|id| cats_of(*id)[0] != "strategy") || strategy.len() == all.len());
+    let ex = ListQuery { exclude: vec!["strategy".into()], ..ListQuery::default() };
+    let kept = page_all(&cat, &conn, &ex, 7);
+    assert_eq!(kept.len(), all.len() - strategy.len());
+    assert!(kept.iter().all(|id| !strategy.contains(id)));
+    let first = cat.list(&conn, &ListQuery { limit: Some(5), ..ex.clone() }).unwrap();
+    assert_eq!(first.total as usize, kept.len());
+    // Unknown slugs are ignored and not bound into the cursor.
+    let with_unknown = ListQuery {
+        exclude: vec!["strategy".into(), "no-such-category".into()],
+        limit: Some(5),
+        ..ListQuery::default()
+    };
+    let same = cat.list(&conn, &with_unknown).unwrap();
+    assert_eq!(same, first);
+    let cursor = first.next_cursor.clone().unwrap();
+    let next = ListQuery { cursor: Some(cursor.clone()), ..with_unknown.clone() };
+    assert!(cat.list(&conn, &next).is_ok());
+    // Changed exclusions or mobile flag: the cursor belongs to another query.
+    for changed in [
+        ListQuery { cursor: Some(cursor.clone()), limit: Some(5), ..ListQuery::default() },
+        ListQuery { cursor: Some(cursor.clone()), exclude: vec!["puzzle".into()], ..ListQuery::default() },
+        ListQuery { cursor: Some(cursor.clone()), mobile: true, ..ex.clone() },
+    ] {
+        match cat.list(&conn, &changed) {
+            Err(CatalogError::InvalidInput(m)) => assert_eq!(m, "cursor does not belong to this query"),
+            other => panic!("{other:?}"),
+        }
+    }
+    let too_many = ListQuery { exclude: (0..21).map(|i| format!("x{i}")).collect(), ..ListQuery::default() };
+    match cat.list(&conn, &too_many) {
+        Err(CatalogError::InvalidInput(m)) => assert_eq!(m, "at most 20 categories can be excluded"),
+        other => panic!("{other:?}"),
+    }
+    // Sections and related games honour the filter.
+    let filter = ListFilter { mobile: false, exclude: vec!["strategy".into()] };
+    let sections = cat.sections(&conn, 24, &filter).unwrap();
+    for g in sections.featured.iter().chain(&sections.trending).chain(&sections.popular).chain(&sections.new) {
+        assert!(!strategy.contains(&g.id), "{}", g.slug);
+    }
+    let some = conn
+        .query_row("SELECT slug FROM games WHERE source = 'gamepix' LIMIT 1", [], |r| r.get::<_, String>(0))
+        .unwrap();
+    let page = cat.game(&conn, &some, 12, &filter).unwrap().unwrap();
+    assert!(page.related.iter().all(|g| !strategy.contains(&g.id)));
+    let mobile = cat.game(&conn, &some, 12, &ListFilter { mobile: true, exclude: vec![] }).unwrap().unwrap();
+    assert!(mobile.related.iter().all(|g| g.mobile));
+}
+
+#[tokio::test]
+async fn error_messages_name_the_parameter() {
+    let (cat, db, _clock) = setup().await;
+    let conn = db.lock().unwrap();
+    let msg = |q: ListQuery| match cat.list(&conn, &q) {
+        Err(CatalogError::InvalidInput(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(msg(ListQuery { limit: Some(0), ..ListQuery::default() }), "limit must be 1-100");
+    assert_eq!(msg(ListQuery { category: Some("girls".into()), ..ListQuery::default() }), "unknown category: girls");
+    assert_eq!(msg(ListQuery { cursor: Some("x".into()), ..ListQuery::default() }), "invalid cursor");
+    assert_eq!(msg(ListQuery { q: Some("x".repeat(101)), ..ListQuery::default() }), "q is limited to 100 characters");
+    match cat.by_ids(&conn, &[1; 201]) {
+        Err(CatalogError::InvalidInput(m)) => assert_eq!(m, "at most 200 ids"),
+        other => panic!("{other:?}"),
+    }
+    match cat.tags(&conn, &"a".repeat(41), 10, false) {
+        Err(CatalogError::InvalidInput(m)) => assert_eq!(m, "tag prefix is limited to 40 characters"),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[tokio::test]
