@@ -470,9 +470,9 @@ The admin listener (`GNOME_ADMIN_BIND`, default `127.0.0.1:9091`; empty disables
 
 ### Everything on
 
-The example below turns on every feature that exists today, on loopback. It was checked with `config check` and
-run (with other ports) on 2026-11-23: the access-code dialog appeared ("Enter code"), browsing worked after entering
-the code, the test VPN profile reported `up` and showed on `/vpn`, the games
+The example below turns on every feature that exists today except the optional access code, on loopback. It was
+checked with `config check` and run (with other ports) on 2026-11-23, when it still set an access code: the
+access-code dialog appeared, browsing worked after entering the code, the test VPN profile reported `up` and showed on `/vpn`, the games
 were imported (GamePix and the open-source games), `/ads.txt` answered, and the admin listener answered 401 without
 the token and 200 with it. The exit check stays off until you set your own check endpoint (the commented line).
 
@@ -496,7 +496,6 @@ printf 'example.com, pub-0000000000000000, DIRECT\n' > data/ads.txt   # the line
 # terminal 2: gnome-server
 export GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 GNOME_ADMIN_BIND=127.0.0.1:9091
 export GNOME_ADMIN_TOKEN=replace-with-a-long-random-token
-export GNOME_ACCESS_MODE=code GNOME_ACCESS_CODE=choose-a-long-code
 export GNOME_ACCOUNTS=true GNOME_REGISTRATION=closed
 export GNOME_ALLOW_CUSTOM_WISP=true
 export GNOME_VPN_PROFILES=$PWD/data/profiles.toml
@@ -521,7 +520,7 @@ curl -s -H "Authorization: Bearer replace-with-a-long-random-token" http://127.0
 ```
 
 In a browser, http://127.0.0.1:9091/admin/ asks for HTTP Basic auth: any username, the token as the password.
-Then open http://127.0.0.1:8080/ and enter the access code when asked; `/games` lists the games and `/vpn` offers
+Then open http://127.0.0.1:8080/; `/games` lists the games and `/vpn` offers
 the test location. Sign in as `alice` under Settings → Account
 & sync to use sync. To stop, press Ctrl+C in terminal 2 and run `kill %1 %2` in terminal 1.
 

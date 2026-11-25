@@ -51,8 +51,8 @@ cargo build --release -p gnome-server
 ### A2. Dev mode with every feature
 
 This turns on everything at once, on loopback: games catalog (GamePix and the reviewed open-source games), filter
-lists, a VPN profile demo (a second HolyWisp stands in for a VPN exit: no tunnel), accounts and sync, the access code
-and the admin listener.
+lists, a VPN profile demo (a second HolyWisp stands in for a VPN exit: no tunnel), accounts and sync,
+and the admin listener. There is no access code: anyone who opens the site can browse, as in production.
 
 **Terminal 1: two HolyWisp instances and the data files.**
 
@@ -76,7 +76,6 @@ printf '[[list]]\nid = "plowe-0"\ndisabled = true\n' > data/lists.toml
 ```sh
 export GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 GNOME_ADMIN_BIND=127.0.0.1:9091
 export GNOME_ADMIN_TOKEN=replace-with-a-long-random-token
-export GNOME_ACCESS_MODE=code GNOME_ACCESS_CODE=choose-a-long-code
 export GNOME_ACCOUNTS=true GNOME_REGISTRATION=closed
 export GNOME_VPN_PROFILES=$PWD/data/profiles.toml
 export GNOME_FILTER_LISTS_FILE=$PWD/data/lists.toml
@@ -97,7 +96,7 @@ curl -s http://127.0.0.1:8080/api/games/status           # about a minute after 
 curl -s -H "Authorization: Bearer replace-with-a-long-random-token" http://127.0.0.1:9091/admin/diagnostics | head -c 300; echo
 ```
 
-**Use it.** Open **http://127.0.0.1:8080/** (use `127.0.0.1`, not `localhost`) and enter the access code. Then:
+**Use it.** Open **http://127.0.0.1:8080/** (use `127.0.0.1`, not `localhost`). Then:
 
 - `/browse`: type an address. The engine badge reads `SJ` (Scramjet).
 - `/games`: the catalog. `/vpn`: Connect to "Test exit (no tunnel)".
@@ -328,7 +327,8 @@ For the Docker stack, use `gs admin get /admin/diagnostics` instead.
 
 **Access modes** (`GNOME_ACCESS_MODE` in `gnome.env` or `.env`):
 
-- `open`: anyone who knows the address.
+- `open`, the default in both install options: anyone who knows the address can browse, with no code. Keep it
+  for a public launch.
 - `code`: visitors enter a shared code. Put it in a file and set `GNOME_ACCESS_CODE_FILE`: on Docker,
   `deployment/init-secrets.sh --access-code` (read the code to share with `cat deployment/secrets/access_code`);
   on systemd, as in B3 step 4.
