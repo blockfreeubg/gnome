@@ -132,9 +132,10 @@ cargo build --release -p gnome-server
 ```
 
 **3. Start HolyWisp** (terminal 1). `gnome.conf` listens on `127.0.0.1:6001`, the default `GNOME_WISP_UPSTREAM`.
+On an ARM machine use `build/aarch64/` instead of `build/x86_64/`, here and below.
 
 ```sh
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf
 ```
 
 **4. Start gnome-server** (terminal 2) with two origins on loopback:
@@ -477,20 +478,18 @@ the token and 200 with it. The exit check stays off until you set your own check
 
 ```sh
 # terminal 1: the default HolyWisp, plus a second one standing in for a VPN exit (no tunnel: a test, not a VPN)
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf &
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf --port 6002 &
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf &
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf --port 6002 &
 
 # still terminal 1: profiles and filter-list overrides, next to the data directory (any path works)
 mkdir -p data
-cat > data/profiles.toml <<'EOF'
-[[profile]]
+printf '%s\n' '[[profile]]
 id = "test-exit"
 label = "Test exit (no tunnel)"
 country_code = "se"
 country = "Sweden"
 city = "Gothenburg"
-wisp_upstream = "127.0.0.1:6002"
-EOF
+wisp_upstream = "127.0.0.1:6002"' > data/profiles.toml
 printf '[[list]]\nid = "plowe-0"\ndisabled = true\n' > data/lists.toml
 printf 'example.com, pub-0000000000000000, DIRECT\n' > data/ads.txt   # the lines your game networks give you
 
@@ -668,9 +667,9 @@ browsing, back/forward, reload, new tabs and `/history` worked through the dev s
 
 ```sh
 # terminal 1
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf
 # terminal 2
-(cd frontend && npm run build) && \
+npm --prefix frontend run build && \
 GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 GNOME_STATIC_DIR=frontend/dist GNOME_STATIC_RELOAD=true \
 GNOME_PUBLIC_ORIGINS=http://127.0.0.1:5173,http://127.0.0.1:8080 cargo run -p gnome-server
 # terminal 3

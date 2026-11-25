@@ -28,6 +28,9 @@ ACME certificates and booting the systemd units were **not** tested here.
 
 ## Part A: this PC
 
+Every command in Part A works in bash, zsh and fish (this PC's terminal runs fish). Run them from the
+repository root, `~/gnome`, unless a step says otherwise.
+
 ### A1. One-time setup
 
 You need Rust (1.89 or newer), a C compiler, Node 22.12 or newer with npm, and Docker with buildx (Docker is only
@@ -54,19 +57,17 @@ and the admin listener.
 **Terminal 1: two HolyWisp instances and the data files.**
 
 ```sh
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf &
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf --port 6002 &
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf &
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf --port 6002 &
 
 mkdir -p data
-cat > data/profiles.toml <<'EOF'
-[[profile]]
+printf '%s\n' '[[profile]]
 id = "test-exit"
 label = "Test exit (no tunnel)"
 country_code = "se"
 country = "Sweden"
 city = "Gothenburg"
-wisp_upstream = "127.0.0.1:6002"
-EOF
+wisp_upstream = "127.0.0.1:6002"' > data/profiles.toml
 printf '[[list]]\nid = "plowe-0"\ndisabled = true\n' > data/lists.toml
 ```
 
@@ -116,9 +117,9 @@ gnome-server's proxy listener, so the server must allow the dev origin. Use four
 
 ```sh
 # terminal 1
-services/holywisp/build/$(uname -m)/holywisp --config services/holywisp/gnome.conf
+services/holywisp/build/x86_64/holywisp --config services/holywisp/gnome.conf
 # terminal 2
-(cd frontend && npm run build) && \
+npm --prefix frontend run build && \
 GNOME_BIND=127.0.0.1:8080 GNOME_PROXY_BIND=127.0.0.1:8081 GNOME_STATIC_DIR=frontend/dist GNOME_STATIC_RELOAD=true \
 GNOME_PUBLIC_ORIGINS=http://127.0.0.1:5173,http://127.0.0.1:8080 cargo run -p gnome-server
 # terminal 3
@@ -136,7 +137,7 @@ Tests: `cargo test --workspace --locked`, `cd frontend && npm run check && npm t
 network, Docker with buildx and `~/.cache/gnome-tools/bin` on `PATH` for the audit:
 
 ```sh
-PATH=$HOME/.cache/gnome-tools/bin:$PATH scripts/release.sh --arch x86_64 --no-third-party-source --reuse-holywisp
+PATH="$HOME/.cache/gnome-tools/bin:$PATH" scripts/release.sh --arch x86_64 --no-third-party-source --reuse-holywisp
 ls release/        # gnome-0.1.0-linux-x86_64.tar.gz, gnome-0.1.0-src.tar.gz, SHA256SUMS
 ```
 
@@ -146,8 +147,8 @@ ls release/        # gnome-0.1.0-linux-x86_64.tar.gz, gnome-0.1.0-src.tar.gz, SH
 **2. Verify and unpack it** in a scratch directory:
 
 ```sh
+cd ~/gnome/release && sha256sum -c --ignore-missing SHA256SUMS
 mkdir -p /tmp/gnome-prod && cd /tmp/gnome-prod
-(cd ~/gnome/release && sha256sum -c --ignore-missing SHA256SUMS)
 tar -xzf ~/gnome/release/gnome-0.1.0-linux-x86_64.tar.gz && cd gnome-0.1.0-linux-x86_64
 ```
 
@@ -170,7 +171,9 @@ PC with `GNOME_TLS_MODE=files` and a certificate of your own.
 
 **Tested on this PC (2026-11-24):** A1 (`npm ci`, both builds), A2 with every command as written but on other ports
 (13xxx, because the usual ports are used by other things here), A4 from the artifact `release.sh` built that day. A3's
-`npm run dev` was not re-run in this pass.
+`npm run dev` was not re-run in this pass. Later that day every block was made to run in fish as well (fish has
+no `<<` heredocs or `( … )` subshells): all of them pass `fish --no-execute`, and A2's terminal 1 ran in fish 4.9
+on its usual ports, 6001 and 6002.
 
 ---
 
